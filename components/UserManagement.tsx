@@ -319,6 +319,84 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser, token }) =
       }
   };
 
+  // Quick toggle to set/remove write permission for all folders of a user
+  const handleQuickToggleReadonly = async (user: User) => {
+      if (!confirm(`¿${user.allowedFolders?.some(f => !f.permissions.includes('write')) ? 'Activar' : 'Desactivar'} escritura para ${user.username}?`)) return;
+      
+      setIsLoading(true);
+      try {
+          const hasSomeReadonly = user.allowedFolders?.some(f => !f.permissions.includes('write'));
+          
+          // Update permissions: either add 'write' to all or remove it from all
+          const updatedFolders: FolderPermission[] = (user.allowedFolders || []).map(f => ({
+              pathPrefix: f.pathPrefix,
+              permissions: hasSomeReadonly 
+                  ? [...new Set([...f.permissions, 'write'])] // Add write
+                  : f.permissions.filter(p => p !== 'write') || ['read'] // Remove write, keep at least read
+          }));
+          
+          // Ensure at least 'read' permission remains
+          updatedFolders.forEach(f => {
+              if (!f.permissions.includes('read')) {
+                  f.permissions.push('read');
+              }
+          });
+          
+          await MockAuthService.updateUser(user.username, {
+              allowedFolders: updatedFolders
+          });
+          
+          await NotificationService.create('permission', 
+              `Modificó permisos de ${user.username}: ${hasSomeReadonly ? 'Activó escritura' : 'Estableció solo lectura'}`, 
+              currentUser.username);
+          
+          await loadUsers();
+      } catch (error: any) {
+          alert(error.message);
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
+  // Quick toggle to set/remove delete permission for all folders of a user
+  const handleQuickToggleDelete = async (user: User) => {
+      if (!confirm(`¿${user.allowedFolders?.some(f => f.permissions.includes('delete')) ? 'Desactivar' : 'Activar'} permiso de eliminar para ${user.username}?`)) return;
+      
+      setIsLoading(true);
+      try {
+          const hasSomeDelete = user.allowedFolders?.some(f => f.permissions.includes('delete'));
+          
+          // Update permissions: either add 'delete' to all or remove it from all
+          const updatedFolders: FolderPermission[] = (user.allowedFolders || []).map(f => ({
+              pathPrefix: f.pathPrefix,
+              permissions: hasSomeDelete 
+                  ? f.permissions.filter(p => p !== 'delete') // Remove delete
+                  : [...new Set([...f.permissions, 'delete'])] // Add delete
+          }));
+          
+          // Ensure at least 'read' permission remains
+          updatedFolders.forEach(f => {
+              if (!f.permissions.includes('read')) {
+                  f.permissions.push('read');
+              }
+          });
+          
+          await MockAuthService.updateUser(user.username, {
+              allowedFolders: updatedFolders
+          });
+          
+          await NotificationService.create('permission', 
+              `Modificó permisos de ${user.username}: ${hasSomeDelete ? 'Desactivó eliminar' : 'Activó eliminar'}`, 
+              currentUser.username);
+          
+          await loadUsers();
+      } catch (error: any) {
+          alert(error.message);
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
   return (
     <div className="p-8 max-w-6xl mx-auto animate-in fade-in duration-500">
       <div className="flex justify-between items-center mb-8">
@@ -425,9 +503,41 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser, token }) =
             </div>
 
             <div className="absolute top-4 right-4 flex space-x-1 opacity-0 group-hover:opacity-100 transition-all">
-                <button onClick={() => openEditModal(user)} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full hover:bg-blue-50"><Edit2 size={16} /></button>
+                <button onClick={() => openEditModal(user)} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full hover:bg-blue-50" title="Editar usuario">
+                    <Edit2 size={16} />
+                </button>
                 {user.username !== currentUser.username && (
-                    <button onClick={() => handleDeleteUser(user.username)} className="text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50"><Trash2 size={16} /></button>
+                    <>
+                        <button 
+                            onClick={() => handleQuickToggleReadonly(user)} 
+                            className={`p-1.5 rounded-full hover:bg-gray-50 ${
+                                user.allowedFolders?.some(f => !f.permissions.includes('write')) 
+                                    ? 'text-orange-500 hover:text-orange-600 hover:bg-orange-50' 
+                                    : 'text-gray-400 hover:text-gray-600'
+                            }`} 
+                            title={user.allowedFolders?.some(f => !f.permissions.includes('write')) ? 'Activar escritura' : 'Desactivar escritura (Solo lectura)'}
+                        >
+                            <Lock size={16} />
+                        </button>
+                        <button 
+                            onClick={() => handleQuickToggleDelete(user)} 
+                            className={`p-1.5 rounded-full hover:bg-gray-50 ${
+                                user.allowedFolders?.some(f => f.permissions.includes('delete')) 
+                                    ? 'text-red-500 hover:text-red-600 hover:bg-red-50' 
+                                    : 'text-gray-400 hover:text-gray-600'
+                            }`} 
+                            title={user.allowedFolders?.some(f => f.permissions.includes('delete')) ? 'Desactivar permiso de eliminar' : 'Activar permiso de eliminar'}
+                        >
+                            <Trash2 size={16} />
+                        </button>
+                        <button 
+                            onClick={() => handleDeleteUser(user.username)} 
+                            className="text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50" 
+                            title="Eliminar usuario"
+                        >
+                            <Trash2 size={16} />
+                        </button>
+                    </>
                 )}
             </div>
           </div>
