@@ -3,7 +3,7 @@ import { User, FolderPermission, DropboxFile, PermissionType } from '../types';
 import { MockAuthService } from '../services/mockAuth';
 import { DropboxService } from '../services/dropboxService';
 import { NotificationService } from '../services/notificationService';
-import { Plus, Trash2, Shield, User as UserIcon, Check, X, Folder, AlertCircle, RefreshCw, Camera, Edit2, Users, UploadCloud, Download } from 'lucide-react';
+import { Plus, Trash2, Shield, User as UserIcon, Check, X, Folder, AlertCircle, RefreshCw, Camera, Edit2, Users, UploadCloud, Download, Lock } from 'lucide-react';
 
 interface UserManagementProps {
   currentUser: User;
@@ -330,9 +330,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser, token }) =
           // Update permissions: either add 'write' to all or remove it from all
           const updatedFolders: FolderPermission[] = (user.allowedFolders || []).map(f => ({
               pathPrefix: f.pathPrefix,
-              permissions: hasSomeReadonly 
-                  ? [...new Set([...f.permissions, 'write'])] // Add write
-                  : f.permissions.filter(p => p !== 'write') || ['read'] // Remove write, keep at least read
+              permissions: (hasSomeReadonly 
+                  ? [...new Set([...f.permissions, 'write' as PermissionType])] // Add write
+                  : f.permissions.filter(p => p !== 'write')) as PermissionType[] // Remove write, keep at least read
           }));
           
           // Ensure at least 'read' permission remains
@@ -369,9 +369,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser, token }) =
           // Update permissions: either add 'delete' to all or remove it from all
           const updatedFolders: FolderPermission[] = (user.allowedFolders || []).map(f => ({
               pathPrefix: f.pathPrefix,
-              permissions: hasSomeDelete 
+              permissions: (hasSomeDelete 
                   ? f.permissions.filter(p => p !== 'delete') // Remove delete
-                  : [...new Set([...f.permissions, 'delete'])] // Add delete
+                  : [...new Set([...f.permissions, 'delete' as PermissionType])]) as PermissionType[] // Add delete
           }));
           
           // Ensure at least 'read' permission remains
@@ -503,42 +503,43 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser, token }) =
             </div>
 
             <div className="absolute top-4 right-4 flex space-x-1 opacity-0 group-hover:opacity-100 transition-all">
-                <button onClick={() => openEditModal(user)} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full hover:bg-blue-50" title="Editar usuario">
+                <button key="edit-btn" onClick={() => openEditModal(user)} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full hover:bg-blue-50" title="Editar usuario">
                     <Edit2 size={16} />
                 </button>
-                {user.username !== currentUser.username && (
-                    <>
-                        <button 
-                            onClick={() => handleQuickToggleReadonly(user)} 
-                            className={`p-1.5 rounded-full hover:bg-gray-50 ${
-                                user.allowedFolders?.some(f => !f.permissions.includes('write')) 
-                                    ? 'text-orange-500 hover:text-orange-600 hover:bg-orange-50' 
-                                    : 'text-gray-400 hover:text-gray-600'
-                            }`} 
-                            title={user.allowedFolders?.some(f => !f.permissions.includes('write')) ? 'Activar escritura' : 'Desactivar escritura (Solo lectura)'}
-                        >
-                            <Lock size={16} />
-                        </button>
-                        <button 
-                            onClick={() => handleQuickToggleDelete(user)} 
-                            className={`p-1.5 rounded-full hover:bg-gray-50 ${
-                                user.allowedFolders?.some(f => f.permissions.includes('delete')) 
-                                    ? 'text-red-500 hover:text-red-600 hover:bg-red-50' 
-                                    : 'text-gray-400 hover:text-gray-600'
-                            }`} 
-                            title={user.allowedFolders?.some(f => f.permissions.includes('delete')) ? 'Desactivar permiso de eliminar' : 'Activar permiso de eliminar'}
-                        >
-                            <Trash2 size={16} />
-                        </button>
-                        <button 
-                            onClick={() => handleDeleteUser(user.username)} 
-                            className="text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50" 
-                            title="Eliminar usuario"
-                        >
-                            <Trash2 size={16} />
-                        </button>
-                    </>
-                )}
+                {user.username !== currentUser.username && [
+                    <button
+                        key="readonly-btn"
+                        onClick={() => handleQuickToggleReadonly(user)}
+                        className={`p-1.5 rounded-full hover:bg-gray-50 ${
+                            user.allowedFolders?.some(f => !f.permissions.includes('write'))
+                                ? 'text-orange-500 hover:text-orange-600 hover:bg-orange-50'
+                                : 'text-gray-400 hover:text-gray-600'
+                        }`}
+                        title={user.allowedFolders?.some(f => !f.permissions.includes('write')) ? 'Activar escritura' : 'Desactivar escritura (Solo lectura)'}
+                    >
+                        <Lock size={16} />
+                    </button>,
+                    <button
+                        key="delete-perm-btn"
+                        onClick={() => handleQuickToggleDelete(user)}
+                        className={`p-1.5 rounded-full hover:bg-gray-50 ${
+                            user.allowedFolders?.some(f => f.permissions.includes('delete'))
+                                ? 'text-red-500 hover:text-red-600 hover:bg-red-50'
+                                : 'text-gray-400 hover:text-gray-600'
+                        }`}
+                        title={user.allowedFolders?.some(f => f.permissions.includes('delete')) ? 'Desactivar permiso de eliminar' : 'Activar permiso de eliminar'}
+                    >
+                        <Trash2 size={16} />
+                    </button>,
+                    <button
+                        key="delete-user-btn"
+                        onClick={() => handleDeleteUser(user.username)}
+                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50"
+                        title="Eliminar usuario"
+                    >
+                        <Trash2 size={16} />
+                    </button>
+                ]}
             </div>
           </div>
         ))}

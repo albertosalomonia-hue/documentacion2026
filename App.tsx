@@ -122,12 +122,29 @@ const App: React.FC = () => {
         // 2. Check for Global Token immediately on load
         await fetchGlobalToken();
 
-        // 3. Initialize Default Admin (if DB is accessible)
+        // 3. Restore user session from localStorage
+        const savedUsername = localStorage.getItem('ayala_current_user');
+        if (savedUsername) {
+            try {
+                const restoredUser = await MockAuthService.getUserByUsername(savedUsername);
+                if (restoredUser) {
+                    setCurrentUser(restoredUser);
+                } else {
+                    localStorage.removeItem('ayala_current_user');
+                }
+            } catch (e) {
+                localStorage.removeItem('ayala_current_user');
+            }
+        }
+
+        // 4. Initialize Default Admin (if DB is accessible)
         try {
             await MockAuthService.initializeDefaultAdmin();
         } catch (e: any) {
             console.error("Failed to initialize default admin:", e);
-            setLoginError(e.message);
+            if (!savedUsername) {
+                setLoginError(e.message);
+            }
         }
     };
 
@@ -422,11 +439,10 @@ const App: React.FC = () => {
 
   const handleCreateFolder = async () => {
       if (!token) { alert("Sin conexión a Dropbox."); return; }
-      
+
       // Validate if user can create folders in current path
       if (!canCreateFolderInPath(currentPath, currentUser)) {
-          alert("No tienes permisos para crear carpetas en esta ubicación. Solo puedes crear carpetas dentro de tu espacio de trabajo asignado.");
-          return;
+          return; // Button is disabled, do nothing
       }
       
       const folderName = prompt("Nombre de la nueva carpeta:");
@@ -446,6 +462,23 @@ const App: React.FC = () => {
           await refreshFiles();
       } catch (err: any) {
           alert("Error: " + err.message);
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
+  const createRootStructure = async () => {
+      if (!token) { alert("Sin conexión a Dropbox."); return; }
+      
+      try {
+          setIsLoading(true);
+          const service = getDropboxService();
+          await service.createFolder(CONFIG_ROOT);
+          setIsRootMissing(false);
+          setCurrentPath(CONFIG_ROOT);
+          await refreshFiles();
+      } catch (err: any) {
+          alert("Error al crear carpeta: " + err.message);
       } finally {
           setIsLoading(false);
       }
@@ -646,11 +679,17 @@ const App: React.FC = () => {
                 </div>
                 
                 <div className="flex items-center space-x-3">
-                     {canCreateFolderInPath(currentPath, currentUser) && (
-                         <button onClick={handleCreateFolder} className="text-gray-600 hover:text-blue-600 flex items-center text-xs font-semibold px-3 py-2 bg-gray-50 rounded hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-all">
-                            <FolderPlus size={16} className="mr-2" /> Nueva Carpeta
-                         </button>
-                     )}
+                     <button 
+                         key="create-folder"
+                         onClick={handleCreateFolder} 
+                         disabled={!canCreateFolderInPath(currentPath, currentUser)}
+                         className={`text-gray-600 hover:text-blue-600 flex items-center text-xs font-semibold px-3 py-2 bg-gray-50 rounded hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-all ${
+                             !canCreateFolderInPath(currentPath, currentUser) ? 'opacity-50 cursor-not-allowed' : ''
+                         }`}
+                         title={!canCreateFolderInPath(currentPath, currentUser) ? "No tienes permisos para crear carpetas aquí" : "Crear nueva carpeta"}
+                     >
+                        <FolderPlus size={16} className="mr-2" /> Nueva Carpeta
+                     </button>
 
                      {/* Connection Status Badge */}
                      <button 
