@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -X GET \"https://aqvtonzstcestkkvdpqb.supabase.co/rest/v1/accesook?username=eq.admin&select=username,user_metadata\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFxdnRvbnpzdGNlc3Rra3ZkcHFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NjIwNjUsImV4cCI6MjA4NjIzODA2NX0.O4RRmEEsH5Am1FXxXHDtUR1uGwwzcPbdriN06C5pbVg\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFxdnRvbnpzdGNlc3Rra3ZkcHFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NjIwNjUsImV4cCI6MjA4NjIzODA2NX0.O4RRmEEsH5Am1FXxXHDtUR1uGwwzcPbdriN06C5pbVg\")",
+      "Bash(curl -s -X GET \"https://aqvtonzstcestkkvdpqb.supabase.co/rest/v1/accesook?username=eq.admin&password=eq.123&select=username,user_metadata\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFxdnRvbnpzdGNlc3Rra3ZkcHFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NjIwNjUsImV4cCI6MjA4NjIzODA2NX0.O4RRmEEsH5Am1FXxXHDtUR1uGwwzcPbdriN06C5pbVg\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFxdnRvbnpzdGNlc3Rra3ZkcHFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NjIwNjUsImV4cCI6MjA4NjIzODA2NX0.O4RRmEEsH5Am1FXxXHDtUR1uGwwzcPbdriN06C5pbVg\")"
+    ]
+  }
+}
