@@ -274,12 +274,12 @@ const App: React.FC = () => {
 
   const isFileVisibleToUser = (file: DropboxFile, user: User) => {
       if (user.role === 'admin') return true;
-      const hasDirectAccess = user.allowedFolders?.some(rule => 
+      const hasDirectAccess = user.allowedFolders?.some(rule =>
           file.path_lower.startsWith(rule.pathPrefix.toLowerCase()) || rule.pathPrefix === '/'
       );
       if (hasDirectAccess) return true;
       if (file['.tag'] === 'folder') {
-          const isParentOfAllowed = user.allowedFolders?.some(rule => 
+          const isParentOfAllowed = user.allowedFolders?.some(rule =>
               rule.pathPrefix.toLowerCase().startsWith(file.path_lower + '/')
           );
           if (isParentOfAllowed) return true;
@@ -287,6 +287,41 @@ const App: React.FC = () => {
       const isSharedFile = user.sharedFiles?.some(sf => sf.path === file.path_lower);
       if (isSharedFile) return true;
       return false;
+  };
+
+  // Check if user can create folders in the given path
+  const canCreateFolderInPath = (path: string, user: User): boolean => {
+      if (user.role === 'admin') return true;
+      
+      // Check if user has write permission in any folder that contains this path
+      return user.allowedFolders?.some(rule => {
+          const rulePath = rule.pathPrefix.toLowerCase();
+          const targetPath = path.toLowerCase();
+          
+          // User can create if they have write permission in:
+          // 1. The exact path
+          // 2. A parent folder of the path
+          const isInScope = rulePath === '/' || targetPath === rulePath || targetPath.startsWith(rulePath + '/');
+          return isInScope && rule.permissions.includes('write');
+      }) ?? false;
+  };
+
+  // Check if user can delete a specific folder
+  const canDeleteFolder = (folder: DropboxFile, user: User): boolean => {
+      if (user.role === 'admin') return true;
+      
+      const folderPath = folder.path_lower;
+      
+      // Check if user has delete permission for this folder
+      return user.allowedFolders?.some(rule => {
+          const rulePath = rule.pathPrefix.toLowerCase();
+          
+          // User can delete if they have delete permission in:
+          // 1. The exact folder path
+          // 2. A parent folder of this folder
+          const isInScope = rulePath === '/' || folderPath === rulePath || folderPath.startsWith(rulePath + '/');
+          return isInScope && rule.permissions.includes('delete');
+      }) ?? false;
   };
 
   const initiateDropboxAuth = async () => { 
@@ -387,6 +422,13 @@ const App: React.FC = () => {
 
   const handleCreateFolder = async () => {
       if (!token) { alert("Sin conexión a Dropbox."); return; }
+      
+      // Validate if user can create folders in current path
+      if (!canCreateFolderInPath(currentPath, currentUser)) {
+          alert("No tienes permisos para crear carpetas en esta ubicación. Solo puedes crear carpetas dentro de tu espacio de trabajo asignado.");
+          return;
+      }
+      
       const folderName = prompt("Nombre de la nueva carpeta:");
       if (!folderName) return;
 
@@ -397,10 +439,10 @@ const App: React.FC = () => {
           setIsLoading(true);
           const service = getDropboxService();
           await service.createFolder(`${currentPath}/${folderName}`);
-          
+
           // NOTIFY
           await NotificationService.create('upload', `Creó carpeta: ${folderName}`, currentUser?.username || 'unknown');
-          
+
           await refreshFiles();
       } catch (err: any) {
           alert("Error: " + err.message);
@@ -439,14 +481,20 @@ const App: React.FC = () => {
     if (!confirm(`¿Eliminar "${file.name}"?`)) return;
     if (!token) return;
 
+    // Validate if user can delete this folder/file
+    if (file['.tag'] === 'folder' && !canDeleteFolder(file, currentUser)) {
+        alert("No tienes permisos para eliminar esta carpeta. Solo puedes eliminar carpetas dentro de tu espacio de trabajo asignado.");
+        return;
+    }
+
     try {
         setIsLoading(true);
         const service = getDropboxService();
         await service.deleteFile(file.path_lower);
-        
+
         // NOTIFY
         await NotificationService.create('delete', `Eliminó: ${file.name}`, currentUser?.username || 'unknown');
-        
+
         await refreshFiles();
     } catch (err: any) {
         alert(`Error al eliminar: ${err.message}`);
@@ -598,10 +646,12 @@ const App: React.FC = () => {
                 </div>
                 
                 <div className="flex items-center space-x-3">
-                     <button onClick={handleCreateFolder} className="text-gray-600 hover:text-blue-600 flex items-center text-xs font-semibold px-3 py-2 bg-gray-50 rounded hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-all">
-                        <FolderPlus size={16} className="mr-2" /> Nueva Carpeta
-                     </button>
-                     
+                     {canCreateFolderInPath(currentPath, currentUser) && (
+                         <button onClick={handleCreateFolder} className="text-gray-600 hover:text-blue-600 flex items-center text-xs font-semibold px-3 py-2 bg-gray-50 rounded hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-all">
+                            <FolderPlus size={16} className="mr-2" /> Nueva Carpeta
+                         </button>
+                     )}
+
                      {/* Connection Status Badge */}
                      <button 
                          onClick={currentUser.role === 'admin' ? (!token ? initiateDropboxAuth : undefined) : undefined}
