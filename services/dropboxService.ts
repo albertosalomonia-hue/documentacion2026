@@ -318,6 +318,12 @@ export class DropboxService {
     return response.metadata;
   }
 
+  async renameFolder(path: string, newName: string): Promise<DropboxFile> {
+    const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
+    const newPath = parentPath === '/' ? `/${newName}` : `${parentPath}/${newName}`;
+    return this.moveFile(path, newPath);
+  }
+
   async getTemporaryLink(path: string): Promise<string> {
     const response = await this.request('/files/get_temporary_link', {
       path

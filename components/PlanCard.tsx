@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { DropboxFile, FileTag, PermissionType } from '../types';
-import { Trash2, Folder as FolderIcon, ArrowRight, FileText, FileSpreadsheet, Image as ImageIcon, Share2, Users, Lock, Edit2, Download } from 'lucide-react';
+import { Trash2, Folder as FolderIcon, ArrowRight, FileText, FileSpreadsheet, Image as ImageIcon, Share2, Users, Lock, Edit2, Download, Pencil } from 'lucide-react';
 import { DropboxService } from '../services/dropboxService';
 
 interface PlanCardProps {
@@ -13,10 +13,12 @@ interface PlanCardProps {
   onShare?: (file: DropboxFile) => void;
   onDownload?: (file: DropboxFile) => void;
   onMove?: (sourceFile: DropboxFile, targetFolder: DropboxFile) => void;
+  onRename?: (file: DropboxFile) => void;
   canDelete?: boolean;
+  canRename?: boolean;
   allTags?: FileTag[];
   draggedFile?: DropboxFile | null;
-  sharedWithCount?: number; 
+  sharedWithCount?: number;
   effectivePermissions?: PermissionType[];
 }
 
@@ -26,17 +28,19 @@ const getFileIcon = (fileName: string) => {
     return <FileText className="text-blue-500" size={20} />;
 };
 
-const PlanCard: React.FC<PlanCardProps> = ({ 
-    file, 
-    onClick, 
-    onDragStart, 
-    onDragEnd, 
-    onDelete, 
+const PlanCard: React.FC<PlanCardProps> = ({
+    file,
+    onClick,
+    onDragStart,
+    onDragEnd,
+    onDelete,
     onAssignTag,
     onShare,
     onDownload,
     onMove,
-    canDelete = false, 
+    onRename,
+    canDelete = false,
+    canRename = false,
     allTags = [],
     draggedFile,
     sharedWithCount = 0,
@@ -58,6 +62,11 @@ const PlanCard: React.FC<PlanCardProps> = ({
   const handleDeleteClick = (e: React.MouseEvent) => {
       e.stopPropagation();
       if (onDelete) onDelete(file);
+  };
+
+  const handleRenameClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (onRename) onRename(file);
   };
 
   const handleShareClick = (e: React.MouseEvent) => {
@@ -159,70 +168,81 @@ const PlanCard: React.FC<PlanCardProps> = ({
                  ))}
              </div>
              
-             {/* PERMISSIONS INDICATOR (Visual Feedback) */}
-             <div className="absolute bottom-2 right-2 flex space-x-0.5">
-                 {!effectivePermissions.includes('write') && (
-                     <span className="bg-gray-100 text-gray-500 p-0.5 rounded shadow-sm border border-gray-200" title="Solo Lectura">
-                         <Lock size={10} />
-                     </span>
-                 )}
-                 {effectivePermissions.includes('download') && (
-                     <span className="bg-green-50 text-green-600 p-0.5 rounded shadow-sm border border-green-100" title="Descarga permitida">
-                         <Download size={10} />
+             {/* PERMISSIONS INDICATOR (Visual Feedback) - LEFT */}
+             <div className="absolute bottom-2 left-2 flex items-center gap-0.5 z-20">
+                 {effectivePermissions.includes('delete') && (
+                     <span className="bg-red-50 text-red-500 p-1 rounded shadow-sm border border-red-100" title="Eliminar">
+                         <Trash2 size={14} />
                      </span>
                  )}
                  {effectivePermissions.includes('write') && (
-                     <span className="bg-blue-50 text-blue-500 p-0.5 rounded shadow-sm border border-blue-100" title="Escritura">
-                         <Edit2 size={10} />
+                     <span className="bg-blue-50 text-blue-500 p-1 rounded shadow-sm border border-blue-100" title="Escritura">
+                         <Edit2 size={14} />
                      </span>
                  )}
-                 {effectivePermissions.includes('delete') && (
-                     <span className="bg-red-50 text-red-500 p-0.5 rounded shadow-sm border border-red-100" title="Eliminar">
-                         <Trash2 size={10} />
+                 {effectivePermissions.includes('download') && (
+                     <span className="bg-green-50 text-green-600 p-1 rounded shadow-sm border border-green-100" title="Descarga permitida">
+                         <Download size={14} />
+                     </span>
+                 )}
+                 {!effectivePermissions.includes('write') && (
+                     <span className="bg-gray-100 text-gray-500 p-1 rounded shadow-sm border border-gray-200" title="Solo Lectura">
+                         <Lock size={14} />
                      </span>
                  )}
              </div>
 
              {/* Shared Indicator */}
              {sharedWithCount > 0 && (
-                 <div className="absolute bottom-2 left-2 flex items-center bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-bold shadow-sm" title={`Compartido con ${sharedWithCount} usuarios`}>
+                 <div className="absolute top-10 left-2 flex items-center bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-bold shadow-sm" title={`Compartido con ${sharedWithCount} usuarios`}>
                      <Users size={10} className="mr-1"/> {sharedWithCount}
                  </div>
              )}
 
-             {/* ACTION BUTTONS (Hover) */}
-             <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all z-20">
-                 
-                 {/* Download Button */}
-                 {onDownload && effectivePermissions.includes('download') && !isFolder && (
-                     <button 
-                        onClick={handleDownloadClick}
-                        className="p-1.5 bg-white text-gray-400 hover:text-green-600 hover:bg-green-50 rounded shadow-sm border border-gray-200"
-                        title="Descargar"
-                     >
-                         <Download size={14} />
-                     </button>
-                 )}
+             {/* ACTION BUTTONS (Hover) - RIGHT */}
+             <div className="absolute bottom-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all z-20">
 
-                 {/* Share Button (Allow for folders too) */}
+                 {/* Share Button */}
                  {onShare && (
-                     <button 
+                     <button
                         onClick={handleShareClick}
-                        className="p-1.5 bg-white text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded shadow-sm border border-gray-200"
+                        className="p-1 bg-white text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded shadow-sm border border-gray-200"
                         title="Compartir"
                      >
                          <Share2 size={14} />
                      </button>
                  )}
 
+                 {/* Rename Button (Folders only) */}
+                 {isFolder && canRename && !isDragOver && (
+                     <button
+                        onClick={handleRenameClick}
+                        className="p-1 bg-white text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded shadow-sm border border-gray-200"
+                        title="Renombrar"
+                     >
+                         <Pencil size={14} />
+                     </button>
+                 )}
+
                  {/* Delete Button */}
                  {canDelete && !isDragOver && (
-                     <button 
+                     <button
                         onClick={handleDeleteClick}
-                        className="p-1.5 bg-white text-gray-400 hover:text-red-600 hover:bg-red-50 rounded shadow-sm border border-gray-200"
+                        className="p-1 bg-white text-gray-400 hover:text-red-600 hover:bg-red-50 rounded shadow-sm border border-gray-200"
                         title="Eliminar"
                      >
                          <Trash2 size={14} />
+                     </button>
+                 )}
+
+                 {/* Download Button */}
+                 {onDownload && effectivePermissions.includes('download') && !isFolder && (
+                     <button
+                        onClick={handleDownloadClick}
+                        className="p-1 bg-white text-gray-400 hover:text-green-600 hover:bg-green-50 rounded shadow-sm border border-gray-200"
+                        title="Descargar"
+                     >
+                         <Download size={14} />
                      </button>
                  )}
              </div>
@@ -254,7 +274,9 @@ export const PlanListItem: React.FC<PlanCardProps> = ({
     onShare,
     onDownload,
     onMove,
+    onRename,
     canDelete = false,
+    canRename = false,
     allTags = [],
     draggedFile,
     sharedWithCount = 0,
@@ -357,12 +379,21 @@ export const PlanListItem: React.FC<PlanCardProps> = ({
                         </button>
                     )}
                     {onShare && (
-                        <button 
+                        <button
                             onClick={(e) => { e.stopPropagation(); if(onShare) onShare(file); }}
                             className="text-gray-400 hover:text-blue-600 transition-colors p-1"
                             title="Compartir"
                         >
                             <Share2 size={16} />
+                        </button>
+                    )}
+                    {isFolder && canRename && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); if(onRename) onRename(file); }}
+                            className="text-gray-400 hover:text-orange-600 transition-colors p-1"
+                            title="Renombrar"
+                        >
+                            <Pencil size={16} />
                         </button>
                     )}
                     {canDelete && (

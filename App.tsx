@@ -12,7 +12,7 @@ import { DropboxFile, PlanGroup, User, FileTag, PermissionType } from './types';
 import { DropboxService, getDropboxAuthUrl, parseAuthTokenFromUrl, parseAuthCodeFromUrl } from './services/dropboxService';
 import { MockAuthService } from './services/mockAuth';
 import { NotificationService } from './services/notificationService';
-import { UploadCloud, CheckCircle, AlertTriangle, RefreshCw, Trash2, Lock, ShieldAlert, FolderPlus, Home, ChevronRight, Tag, Plus, X, ArrowRight, FileText, Folder as FolderIcon, Loader2, Link2, Shield, Wrench } from 'lucide-react';
+import { UploadCloud, CheckCircle, AlertTriangle, RefreshCw, Trash2, Lock, ShieldAlert, FolderPlus, Home, ChevronRight, Tag, Plus, X, ArrowRight, FileText, Folder as FolderIcon, Loader2, Link2, Shield, Wrench, Edit2 } from 'lucide-react';
 
 const PROVIDED_TOKEN = process.env.NEXT_PUBLIC_DROPBOX_ACCESS_TOKEN;
 const CONFIG_ROOT = process.env.NEXT_PUBLIC_DROPBOX_ROOT_PATH || '';
@@ -65,6 +65,19 @@ const App: React.FC = () => {
       target: DropboxFile | null;
       isMoving: boolean;
   }>({ isOpen: false, source: null, target: null, isMoving: false });
+
+  const [renameModal, setRenameModal] = useState<{
+      isOpen: boolean;
+      folder: DropboxFile | null;
+      isRenaming: boolean;
+  }>({ isOpen: false, folder: null, isRenaming: false });
+
+  const [uploadProgress, setUploadProgress] = useState<{
+      isOpen: boolean;
+      files: { name: string; status: 'pending' | 'uploading' | 'done' | 'error' }[];
+      current: number;
+      total: number;
+  }>({ isOpen: false, files: [], current: 0, total: 0 });
 
   // 1. Initialize Auth and Token
   useEffect(() => {
@@ -341,6 +354,20 @@ const App: React.FC = () => {
       }) ?? false;
   };
 
+  // Check if user can rename a specific folder
+  const canRenameFolder = (folder: DropboxFile, user: User): boolean => {
+      if (user.role === 'admin') return true;
+
+      const folderPath = folder.path_lower;
+
+      // User can rename if they have write permission for this folder or a parent
+      return user.allowedFolders?.some(rule => {
+          const rulePath = rule.pathPrefix.toLowerCase();
+          const isInScope = rulePath === '/' || folderPath === rulePath || folderPath.startsWith(rulePath + '/');
+          return isInScope && rule.permissions.includes('write');
+      }) ?? false;
+  };
+
   const initiateDropboxAuth = async () => { 
       const url = await getDropboxAuthUrl();
       window.location.href = url; 
@@ -467,6 +494,36 @@ const App: React.FC = () => {
       }
   };
 
+  const handleRenameFolder = async (folder: DropboxFile) => {
+      if (!token) { alert("Sin conexión a Dropbox."); return; }
+      if (!canRenameFolder(folder, currentUser)) {
+          alert("No tienes permisos para renombrar esta carpeta.");
+          return;
+      }
+
+      const newName = prompt("Nuevo nombre para la carpeta:", folder.name);
+      if (!newName || newName.trim() === '') return;
+      if (newName.includes('/')) { alert("El nombre no puede contener '/'."); return; }
+
+      const parentPath = folder.path_lower.substring(0, folder.path_lower.lastIndexOf('/'));
+      const newPath = parentPath === '' ? `/${newName.trim()}` : `${parentPath}/${newName.trim()}`;
+      if (isRestrictedPath(newPath.toLowerCase())) { alert("Nombre restringido."); return; }
+
+      try {
+          setIsLoading(true);
+          const service = getDropboxService();
+          await service.renameFolder(folder.path_lower, newName.trim());
+
+          await NotificationService.create('upload', `Renombró carpeta: "${folder.name}" → "${newName.trim()}"`, currentUser?.username || 'unknown');
+
+          await refreshFiles();
+      } catch (err: any) {
+          alert("Error al renomrar: " + err.message);
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
   const createRootStructure = async () => {
       if (!token) { alert("Sin conexión a Dropbox."); return; }
       
@@ -488,26 +545,52 @@ const App: React.FC = () => {
 
   const processFileUpload = async (files: FileList | File[]) => {
     if (!token) { alert("Sin conexión a Dropbox."); return; }
-    setIsLoading(true);
+
+    const fileArray = Array.from(files);
+    const fileEntries = fileArray.map(f => ({ name: f.name, status: 'pending' as const }));
+    setUploadProgress({ isOpen: true, files: fileEntries, current: 0, total: fileArray.length });
+
     const service = getDropboxService();
     let successCount = 0;
-    try {
-        const fileArray = Array.from(files);
-        for (const file of fileArray) {
-            try { 
-                await service.uploadFile(currentPath, file); 
-                successCount++; 
-                // NOTIFY
-                await NotificationService.create('upload', `Subió archivo: ${file.name}`, currentUser?.username || 'unknown');
-            } catch (err) { console.error(err); }
+    let errorCount = 0;
+
+    for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
+
+        setUploadProgress(prev => {
+            const updated = [...prev.files];
+            updated[i] = { ...updated[i], status: 'uploading' };
+            return { ...prev, files: updated, current: i };
+        });
+
+        try {
+            await service.uploadFile(currentPath, file);
+            successCount++;
+            await NotificationService.create('upload', `Subió archivo: ${file.name}`, currentUser?.username || 'unknown');
+            setUploadProgress(prev => {
+                const updated = [...prev.files];
+                updated[i] = { ...updated[i], status: 'done' };
+                return { ...prev, files: updated, current: i + 1 };
+            });
+        } catch (err: any) {
+            console.error(err);
+            errorCount++;
+            setUploadProgress(prev => {
+                const updated = [...prev.files];
+                updated[i] = { ...updated[i], status: 'error' };
+                return { ...prev, files: updated, current: i + 1 };
+            });
         }
-        await refreshFiles(); 
-        if(successCount > 0) console.log("Upload success");
-    } catch (err: any) {
-        alert(`Error al subir: ${err.message}`);
-    } finally {
-        setIsLoading(false);
     }
+
+    await refreshFiles();
+
+    setTimeout(() => {
+        setUploadProgress({ isOpen: false, files: [], current: 0, total: 0 });
+        if (errorCount > 0) {
+            alert(`Subida completada con errores: ${successCount} exitosos, ${errorCount} fallidos.`);
+        }
+    }, 1500);
   };
 
   const handleDelete = async (file: DropboxFile) => {
@@ -585,22 +668,81 @@ const App: React.FC = () => {
 
   const handleFolderUploadClick = async () => {
     if (!token) return;
+
+    // Validate if user can upload to current path
+    if (!canCreateFolderInPath(currentPath, currentUser)) {
+        alert("No tienes permisos para subir archivos a esta carpeta.");
+        return;
+    }
+
     const input = document.createElement('input');
     input.type = 'file';
     input.setAttribute('webkitdirectory', ''); input.setAttribute('directory', ''); input.setAttribute('multiple', '');
     input.onchange = async (e: any) => {
         if (!e.target.files.length) return;
-        setIsLoading(true);
-        try {
-            const service = getDropboxService();
-            for (let i = 0; i < e.target.files.length; i++) {
-                const file = e.target.files[i];
-                if (file.webkitRelativePath) {
-                   await service.uploadFile(currentPath, file, [currentPath === '/' ? '' : currentPath, file.webkitRelativePath].join('/'));
+
+        const files = Array.from(e.target.files) as File[];
+        const fileCount = files.length;
+        const folderName = files[0].webkitRelativePath?.split('/')[0] || 'carpeta';
+
+        if (!confirm(`Se subirán ${fileCount} archivos desde "${folderName}". ¿Continuar?`)) {
+            return;
+        }
+
+        // Initialize progress state
+        const fileEntries = files.map(f => ({ name: f.webkitRelativePath || f.name, status: 'pending' as const }));
+        setUploadProgress({ isOpen: true, files: fileEntries, current: 0, total: fileCount });
+
+        const service = getDropboxService();
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            if (file.webkitRelativePath) {
+                const fullPath = [currentPath === '/' ? '' : currentPath, file.webkitRelativePath].join('/');
+
+                // Mark as uploading
+                setUploadProgress(prev => {
+                    const updated = [...prev.files];
+                    updated[i] = { ...updated[i], status: 'uploading' };
+                    return { ...prev, files: updated, current: i };
+                });
+
+                try {
+                    await service.uploadFile(currentPath, file, fullPath);
+                    successCount++;
+                    setUploadProgress(prev => {
+                        const updated = [...prev.files];
+                        updated[i] = { ...updated[i], status: 'done' };
+                        return { ...prev, files: updated, current: i + 1 };
+                    });
+                } catch (err: any) {
+                    console.error(`Error subiendo ${file.name}:`, err);
+                    errorCount++;
+                    setUploadProgress(prev => {
+                        const updated = [...prev.files];
+                        updated[i] = { ...updated[i], status: 'error' };
+                        return { ...prev, files: updated, current: i + 1 };
+                    });
                 }
             }
-            await refreshFiles();
-        } catch (err: any) { alert(`Error: ${err.message}`); } finally { setIsLoading(false); }
+        }
+
+        await refreshFiles();
+
+        // NOTIFY
+        if (successCount > 0) {
+            await NotificationService.create('upload', `Subió carpeta: ${folderName} (${successCount} archivos)`, currentUser?.username || 'unknown');
+        }
+
+        // Close progress after a brief delay so user can see results
+        setTimeout(() => {
+            setUploadProgress({ isOpen: false, files: [], current: 0, total: 0 });
+            if (errorCount > 0) {
+                alert(`Subida completada con errores: ${successCount} exitosos, ${errorCount} fallidos.`);
+            }
+        }, 1500);
     };
     input.click();
   };
@@ -634,9 +776,72 @@ const App: React.FC = () => {
         onDragLeave={(e) => { e.preventDefault(); if (e.clientX === 0 && e.clientY === 0) setIsExternalDragging(false); }}
         onDrop={async (e) => { e.preventDefault(); setIsExternalDragging(false); if (e.dataTransfer.files.length > 0 && currentView === 'plans') await processFileUpload(e.dataTransfer.files); }}
     >
-      {/* Modals omitted for brevity */}
+      {/* Modals */}
       {shareModalOpen.isOpen && shareModalOpen.file && (<ShareModal file={shareModalOpen.file} isOpen={shareModalOpen.isOpen} onClose={() => setShareModalOpen({file: null, isOpen: false})} currentShares={{}} onSave={() => {}} currentUser={currentUser} />)}
       {previewFile && <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onDownload={handleDownload} />}
+
+      {/* Upload Progress Modal */}
+      {uploadProgress.isOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+                  <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                      <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                          <UploadCloud size={20} className="mr-2 text-blue-600" />
+                          Subiendo Archivos
+                      </h3>
+                      <span className="text-sm font-medium text-gray-500">
+                          {uploadProgress.current} / {uploadProgress.total}
+                      </span>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="px-6 py-3">
+                      <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                          <div
+                              className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                              style={{ width: `${uploadProgress.total > 0 ? (uploadProgress.current / uploadProgress.total) * 100 : 0}%` }}
+                          />
+                      </div>
+                  </div>
+
+                  {/* File List */}
+                  <div className="px-6 pb-4 max-h-64 overflow-y-auto">
+                      <ul className="space-y-1">
+                          {uploadProgress.files.map((f, i) => (
+                              <li key={i} className="flex items-center text-sm py-1 px-2 rounded">
+                                  <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center mr-2">
+                                      {f.status === 'uploading' && (
+                                          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                                      )}
+                                      {f.status === 'done' && (
+                                          <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                          </svg>
+                                      )}
+                                      {f.status === 'error' && (
+                                          <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                          </svg>
+                                      )}
+                                      {f.status === 'pending' && (
+                                          <div className="w-2 h-2 rounded-full bg-gray-300" />
+                                      )}
+                                  </span>
+                                  <span className={`truncate ${
+                                      f.status === 'error' ? 'text-red-600' :
+                                      f.status === 'done' ? 'text-green-700' :
+                                      f.status === 'uploading' ? 'text-blue-700 font-medium' :
+                                      'text-gray-500'
+                                  }`}>
+                                      {f.name}
+                                  </span>
+                              </li>
+                          ))}
+                      </ul>
+                  </div>
+              </div>
+          </div>
+      )}
 
       <Sidebar currentView={currentView} onNavigate={setCurrentView} userRole={currentUser.role} />
       
@@ -762,7 +967,7 @@ const App: React.FC = () => {
                                 {folders.map(folder => {
                                     const perms = getEffectivePermissions(folder, currentUser);
                                     const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanListItem key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} />;
+                                    return <PlanListItem key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
                                 })}
                                 {regularFiles.map(file => {
                                     const perms = getEffectivePermissions(file, currentUser);
@@ -781,7 +986,7 @@ const App: React.FC = () => {
                                 {folders.map(folder => {
                                     const perms = getEffectivePermissions(folder, currentUser);
                                     const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanCard key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} />;
+                                    return <PlanCard key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
                                 })}
                             </div>
                         </div>
