@@ -241,41 +241,60 @@ export class DropboxService {
     }
   }
 
+  // Files larger than this go through upload sessions (Dropbox limit per request is 150 MB)
+  private readonly UPLOAD_THRESHOLD = 150 * 1024 * 1024;
+  // 100 MB per chunk — multiple of 4 MB as required by Dropbox append endpoint
+  private readonly CHUNK_SIZE = 100 * 1024 * 1024;
+
   /**
    * Helper to safely stringify JSON for HTTP headers (ASCII only).
-   * Encodes non-ASCII characters to unicode escape sequences.
+   * Encodes non-ASCII characters (including surrogate pairs for emoji) to unicode escape sequences.
    */
   private toDropboxApiArg(data: any): string {
-      return JSON.stringify(data).replace(/[\u007f-\uffff]/g, (c) => { 
-          return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4); 
-      });
+    return JSON.stringify(data).replace(/[\u007f-\uffff]/g, (c) => {
+      return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4);
+    });
+  }
+
+  /**
+   * Extracts just the base filename from a File object, normalizing Unicode to NFC.
+   * Some browsers (older Firefox, IE) may include a full path in file.name.
+   */
+  private safeFileName(file: File): string {
+    // Split on both forward and back slashes, take the last segment
+    const base = file.name.split(/[/\\]/).pop() || file.name;
+    // NFC normalization ensures consistent representation across browsers/OS
+    return base.normalize('NFC');
   }
 
   /**
    * Uploads a file to Dropbox.
+   * Automatically uses upload sessions for files larger than 150 MB.
    * @param path The base directory path OR full path if manual path construction is needed.
    * @param file The file object.
    * @param explicitPath (Optional) If provided, this is the exact full path (including filename) to use.
    */
   async uploadFile(path: string, file: File, explicitPath?: string): Promise<DropboxFile> {
-    
-    // Determine the full destination path
-    // If explicitPath is provided (e.g. for recursive folder uploads), use it.
-    // Otherwise, construct from base path + filename.
-    const dropboxPath = explicitPath 
-        ? explicitPath 
-        : (path === '/' ? `/${file.name}` : `${path}/${file.name}`);
+    const safeName = this.safeFileName(file);
 
-    // Dropbox requires header values to be ASCII.
-    // We use toDropboxApiArg to handle special characters (accents, emojis, etc.) in the path.
+    // Determine the full destination path
+    const dropboxPath = explicitPath
+      ? explicitPath
+      : (path === '/' ? `/${safeName}` : `${path}/${safeName}`);
+
+    if (file.size > this.UPLOAD_THRESHOLD) {
+      return this.uploadLargeFile(dropboxPath, file);
+    }
+
+    // Dropbox requires header values to be ASCII — toDropboxApiArg handles that.
     const headers: HeadersInit = {
       'Authorization': `Bearer ${this.accessToken}`,
       'Content-Type': 'application/octet-stream',
       'Dropbox-API-Arg': this.toDropboxApiArg({
         path: dropboxPath,
-        mode: 'overwrite', // Changed from 'add' to 'overwrite' to prevent duplicates
-        autorename: false, // Changed to false so it replaces the existing file
-        mute: false
+        mode: 'overwrite',
+        autorename: false,
+        mute: false,
       }),
     };
 
@@ -291,6 +310,71 @@ export class DropboxService {
     }
 
     return await response.json();
+  }
+
+  /**
+   * Uploads files larger than 150 MB using Dropbox upload sessions.
+   * Splits the file into chunks of CHUNK_SIZE and commits at the end.
+   */
+  private async uploadLargeFile(dropboxPath: string, file: File): Promise<DropboxFile> {
+    let offset = 0;
+    let sessionId: string;
+
+    // --- Start session with first chunk ---
+    const firstChunk = file.slice(0, Math.min(this.CHUNK_SIZE, file.size));
+    const startRes = await fetch(`${DROPBOX_CONTENT_BASE}/files/upload_session/start`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/octet-stream',
+        'Dropbox-API-Arg': this.toDropboxApiArg({ close: false }),
+      },
+      body: firstChunk,
+    });
+    if (!startRes.ok) throw new Error(`Upload session start failed: ${await startRes.text()}`);
+    sessionId = (await startRes.json()).session_id;
+    offset += firstChunk.size;
+
+    // --- Append middle chunks ---
+    while (offset + this.CHUNK_SIZE < file.size) {
+      const chunk = file.slice(offset, offset + this.CHUNK_SIZE);
+      const appendRes = await fetch(`${DROPBOX_CONTENT_BASE}/files/upload_session/append_v2`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/octet-stream',
+          'Dropbox-API-Arg': this.toDropboxApiArg({
+            cursor: { session_id: sessionId, offset },
+            close: false,
+          }),
+        },
+        body: chunk,
+      });
+      if (!appendRes.ok) throw new Error(`Upload session append failed: ${await appendRes.text()}`);
+      offset += chunk.size;
+    }
+
+    // --- Finish: send remaining bytes and commit ---
+    const lastChunk = file.slice(offset, file.size);
+    const finishRes = await fetch(`${DROPBOX_CONTENT_BASE}/files/upload_session/finish`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/octet-stream',
+        'Dropbox-API-Arg': this.toDropboxApiArg({
+          cursor: { session_id: sessionId, offset },
+          commit: {
+            path: dropboxPath,
+            mode: 'overwrite',
+            autorename: false,
+            mute: false,
+          },
+        }),
+      },
+      body: lastChunk,
+    });
+    if (!finishRes.ok) throw new Error(`Upload session finish failed: ${await finishRes.text()}`);
+    return await finishRes.json();
   }
 
   async deleteFile(path: string): Promise<void> {

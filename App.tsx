@@ -661,7 +661,8 @@ const App: React.FC = () => {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true; 
-    input.accept = '*';
+    // Leave accept empty so ALL file types are shown in every browser
+    // (accept="*" is invalid and some browsers filter files incorrectly)
     input.onchange = async (e: any) => { if (e.target.files.length) processFileUpload(e.target.files); };
     input.click();
   };
