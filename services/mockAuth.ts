@@ -232,6 +232,43 @@ export const MockAuthService = {
     return false;
   },
 
+  /**
+   * Grants delete (and download) permission on multiple uploaded files at once.
+   * Called after a successful upload so the uploader can delete their own files.
+   * Returns the updated User object.
+   */
+  grantDeleteForUploadedFiles: async (username: string, filePaths: string[]): Promise<User> => {
+      if (filePaths.length === 0) {
+          const user = await MockAuthService.getUserByUsername(username);
+          if (!user) throw new Error('Usuario no encontrado');
+          return user;
+      }
+
+      const user = await MockAuthService.getUserByUsername(username);
+      if (!user) throw new Error('Usuario no encontrado');
+
+      const currentFiles = user.sharedFiles || [];
+      const updatedFiles = [...currentFiles];
+
+      for (const path of filePaths) {
+          const existingIndex = updatedFiles.findIndex(f => f.path === path);
+          if (existingIndex >= 0) {
+              // Merge: add delete/download if not already present
+              const merged = Array.from(new Set([
+                  ...updatedFiles[existingIndex].permissions,
+                  'read' as PermissionType,
+                  'delete' as PermissionType,
+                  'download' as PermissionType,
+              ]));
+              updatedFiles[existingIndex] = { ...updatedFiles[existingIndex], permissions: merged };
+          } else {
+              updatedFiles.push({ path, permissions: ['read', 'delete', 'download'] });
+          }
+      }
+
+      return MockAuthService.updateUser(username, { sharedFiles: updatedFiles });
+  },
+
   // --- GLOBAL SYSTEM CONFIG (DROPBOX TOKEN) ---
   
   /**

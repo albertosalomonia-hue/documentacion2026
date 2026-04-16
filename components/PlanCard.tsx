@@ -171,8 +171,8 @@ const PlanCard: React.FC<PlanCardProps> = ({
              {/* PERMISSIONS INDICATOR (Visual Feedback) - LEFT */}
              <div className="absolute bottom-2 left-2 flex items-center gap-0.5 z-20">
                  {effectivePermissions.includes('delete') && (
-                     <span className="bg-red-50 text-red-500 p-1 rounded shadow-sm border border-red-100" title="Eliminar">
-                         <Trash2 size={14} />
+                     <span className="bg-green-50 text-green-600 p-1 rounded shadow-sm border border-green-100" title="Descargar">
+                         <Download size={14} />
                      </span>
                  )}
                  {effectivePermissions.includes('write') && (

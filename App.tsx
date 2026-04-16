@@ -553,6 +553,7 @@ const App: React.FC = () => {
     const service = getDropboxService();
     let successCount = 0;
     let errorCount = 0;
+    const uploadedPaths: string[] = [];
 
     for (let i = 0; i < fileArray.length; i++) {
         const file = fileArray[i];
@@ -564,7 +565,8 @@ const App: React.FC = () => {
         });
 
         try {
-            await service.uploadFile(currentPath, file);
+            const uploadedFile = await service.uploadFile(currentPath, file);
+            uploadedPaths.push(uploadedFile.path_lower);
             successCount++;
             await NotificationService.create('upload', `Subió archivo: ${file.name}`, currentUser?.username || 'unknown');
             setUploadProgress(prev => {
@@ -580,6 +582,16 @@ const App: React.FC = () => {
                 updated[i] = { ...updated[i], status: 'error' };
                 return { ...prev, files: updated, current: i + 1 };
             });
+        }
+    }
+
+    // Grant delete permission on uploaded files for non-admin users
+    if (currentUser && currentUser.role !== 'admin' && uploadedPaths.length > 0) {
+        try {
+            const updatedUser = await MockAuthService.grantDeleteForUploadedFiles(currentUser.username, uploadedPaths);
+            setCurrentUser(updatedUser);
+        } catch (e) {
+            console.error('Error al registrar permisos de eliminación:', e);
         }
     }
 
@@ -697,6 +709,7 @@ const App: React.FC = () => {
         const service = getDropboxService();
         let successCount = 0;
         let errorCount = 0;
+        const uploadedPaths: string[] = [];
 
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
@@ -711,7 +724,8 @@ const App: React.FC = () => {
                 });
 
                 try {
-                    await service.uploadFile(currentPath, file, fullPath);
+                    const uploadedFile = await service.uploadFile(currentPath, file, fullPath);
+                    uploadedPaths.push(uploadedFile.path_lower);
                     successCount++;
                     setUploadProgress(prev => {
                         const updated = [...prev.files];
@@ -727,6 +741,16 @@ const App: React.FC = () => {
                         return { ...prev, files: updated, current: i + 1 };
                     });
                 }
+            }
+        }
+
+        // Grant delete permission on uploaded files for non-admin users
+        if (currentUser && currentUser.role !== 'admin' && uploadedPaths.length > 0) {
+            try {
+                const updatedUser = await MockAuthService.grantDeleteForUploadedFiles(currentUser.username, uploadedPaths);
+                setCurrentUser(updatedUser);
+            } catch (e) {
+                console.error('Error al registrar permisos de eliminación:', e);
             }
         }
 
