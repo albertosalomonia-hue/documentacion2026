@@ -74,7 +74,7 @@ const App: React.FC = () => {
 
   const [uploadProgress, setUploadProgress] = useState<{
       isOpen: boolean;
-      files: { name: string; status: 'pending' | 'uploading' | 'done' | 'error' }[];
+      files: { name: string; status: 'pending' | 'uploading' | 'done' | 'error'; oldSize?: number; newSize?: number }[];
       current: number;
       total: number;
   }>({ isOpen: false, files: [], current: 0, total: 0 });
@@ -595,7 +595,7 @@ const App: React.FC = () => {
   
   // ...
 
-  const processFileUpload = async (files: FileList | File[]) => {
+  const processFileUpload = async (uploadFiles: FileList | File[]) => {
     if (!token) { alert("Sin conexión a Dropbox."); return; }
 
     if (!canCreateFolderInPath(currentPath, currentUser!)) {
@@ -603,8 +603,11 @@ const App: React.FC = () => {
         return;
     }
 
-    const fileArray = Array.from(files);
-    const fileEntries = fileArray.map(f => ({ name: f.name, status: 'pending' as const }));
+    const fileArray = Array.from(uploadFiles);
+    const fileEntries = fileArray.map(f => {
+        const existing = files.find(ef => ef['.tag'] !== 'folder' && ef.name.toLowerCase() === f.name.toLowerCase());
+        return { name: f.name, status: 'pending' as const, oldSize: existing?.size, newSize: f.size };
+    });
     setUploadProgress({ isOpen: true, files: fileEntries, current: 0, total: fileArray.length });
 
     const service = getDropboxService();
@@ -724,6 +727,41 @@ const App: React.FC = () => {
           const a = document.createElement('a'); a.href = link; a.download = file.name;
           document.body.appendChild(a); a.click(); document.body.removeChild(a);
       } catch (err: any) { alert('Error: ' + err.message); }
+  };
+
+  const handleOpenLocal = async (file: DropboxFile) => {
+      if (!token) return;
+      try {
+          const service = getDropboxService();
+          const link = await service.getTemporaryLink(file.path_lower);
+          const ext = (file.name.split('.').pop() || '').toLowerCase();
+
+          let protocolUri: string | null = null;
+          if (ext === 'docx' || ext === 'doc') {
+              protocolUri = `ms-word:ofe|u|${encodeURIComponent(link)}`;
+          } else if (ext === 'xlsx' || ext === 'xls') {
+              protocolUri = `ms-excel:ofe|u|${encodeURIComponent(link)}`;
+          } else if (ext === 'pptx' || ext === 'ppt') {
+              protocolUri = `ms-powerpoint:ofe|u|${encodeURIComponent(link)}`;
+          }
+
+          if (protocolUri) {
+              const a = document.createElement('a');
+              a.href = protocolUri;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+          } else {
+              const a = document.createElement('a');
+              a.href = link;
+              a.download = file.name;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+          }
+
+          await NotificationService.create('system', `Abrió archivo: ${file.name}`, currentUser?.username || 'unknown');
+      } catch (err: any) { alert('Error al abrir: ' + err.message); }
   };
 
   const handleManualUploadClick = async () => {
@@ -880,24 +918,16 @@ const App: React.FC = () => {
                       <div className="py-1">
                           <button
                               className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-blue-50 flex items-center gap-2.5 transition-colors"
-                              onClick={() => { window.open(getDropboxService().getWebUrl(contextMenu.file!), '_blank'); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
-                              <ExternalLink size={14} className="text-gray-400 shrink-0" />
-                              <span>Abrir en Dropbox</span>
+                              onClick={() => { handleOpenLocal(contextMenu.file!); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                              <ExternalLink size={14} className="text-blue-500 shrink-0" />
+                              <span>Abrir con {getEditorInfo(contextMenu.file.name).name}</span>
                           </button>
-                          {contextMenu.file.name.match(/\.(docx|doc|xlsx|xls|pptx|ppt)$/i) && (
-                              <button
-                                  className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-blue-50 flex items-center gap-2.5 transition-colors"
-                                  onClick={() => { window.open(getDropboxService().getWebUrl(contextMenu.file!), '_blank'); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
-                                  <Edit2 size={14} className="text-blue-500 shrink-0" />
-                                  <span>Editar en línea (Office)</span>
-                              </button>
-                          )}
                           {contextMenu.canDownload && (
                               <button
                                   className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-green-50 flex items-center gap-2.5 transition-colors"
                                   onClick={() => { handleDownload(contextMenu.file!); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
                                   <Download size={14} className="text-green-500 shrink-0" />
-                                  <span>Descargar para editar</span>
+                                  <span>Descargar</span>
                               </button>
                           )}
                       </div>
@@ -978,36 +1008,60 @@ const App: React.FC = () => {
                   {/* File List */}
                   <div className="px-6 pb-4 max-h-64 overflow-y-auto">
                       <ul className="space-y-1">
-                          {uploadProgress.files.map((f, i) => (
-                              <li key={i} className="flex items-center text-sm py-1 px-2 rounded">
-                                  <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center mr-2">
-                                      {f.status === 'uploading' && (
-                                          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                          {uploadProgress.files.map((f, i) => {
+                              const diff = f.oldSize !== undefined && f.newSize !== undefined ? f.newSize - f.oldSize : null;
+                              const fmtKB = (b: number) => Math.abs(b) >= 1024 * 1024
+                                  ? (b / (1024 * 1024)).toFixed(1) + ' MB'
+                                  : (b / 1024).toFixed(1) + ' KB';
+                              return (
+                                  <li key={i} className="flex items-center text-sm py-1 px-2 rounded gap-2">
+                                      <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+                                          {f.status === 'uploading' && (
+                                              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                                          )}
+                                          {f.status === 'done' && (
+                                              <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                              </svg>
+                                          )}
+                                          {f.status === 'error' && (
+                                              <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                              </svg>
+                                          )}
+                                          {f.status === 'pending' && (
+                                              <div className="w-2 h-2 rounded-full bg-gray-300" />
+                                          )}
+                                      </span>
+                                      <span className={`truncate flex-1 ${
+                                          f.status === 'error' ? 'text-red-600' :
+                                          f.status === 'done' ? 'text-green-700' :
+                                          f.status === 'uploading' ? 'text-blue-700 font-medium' :
+                                          'text-gray-500'
+                                      }`}>
+                                          {f.name}
+                                      </span>
+                                      {f.newSize !== undefined && (
+                                          <span className="flex-shrink-0 flex items-center gap-1 text-xs font-mono">
+                                              {f.oldSize !== undefined ? (
+                                                  <>
+                                                      <span className="text-gray-400">{fmtKB(f.oldSize)}</span>
+                                                      <span className="text-gray-300">→</span>
+                                                      <span className="text-gray-600">{fmtKB(f.newSize)}</span>
+                                                      {diff !== null && diff !== 0 && (
+                                                          <span className={`px-1 rounded font-semibold ${diff > 0 ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600'}`}>
+                                                              {diff > 0 ? '+' : ''}{fmtKB(diff)}
+                                                          </span>
+                                                      )}
+                                                  </>
+                                              ) : (
+                                                  <span className="text-gray-400">{fmtKB(f.newSize)}</span>
+                                              )}
+                                          </span>
                                       )}
-                                      {f.status === 'done' && (
-                                          <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                          </svg>
-                                      )}
-                                      {f.status === 'error' && (
-                                          <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                          </svg>
-                                      )}
-                                      {f.status === 'pending' && (
-                                          <div className="w-2 h-2 rounded-full bg-gray-300" />
-                                      )}
-                                  </span>
-                                  <span className={`truncate ${
-                                      f.status === 'error' ? 'text-red-600' :
-                                      f.status === 'done' ? 'text-green-700' :
-                                      f.status === 'uploading' ? 'text-blue-700 font-medium' :
-                                      'text-gray-500'
-                                  }`}>
-                                      {f.name}
-                                  </span>
-                              </li>
-                          ))}
+                                  </li>
+                              );
+                          })}
                       </ul>
                   </div>
               </div>
@@ -1130,6 +1184,7 @@ const App: React.FC = () => {
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tamaño</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Modificado</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hora de Actualización</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Etiquetas</th>
                                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
                                 </tr>

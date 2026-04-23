@@ -7,6 +7,7 @@ export interface DropboxFile {
   '.tag': 'file' | 'folder';
   size?: number;
   client_modified?: string;
+  server_modified?: string;
   thumbnailUrl?: string; // Generated locally for preview
   tags?: string[]; // IDs of tags assigned to this file
 }

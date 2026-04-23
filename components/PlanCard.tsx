@@ -359,7 +359,20 @@ export const PlanListItem: React.FC<PlanCardProps> = ({
                 {file.size ? (file.size / 1024).toFixed(1) + ' KB' : '-'}
             </td>
             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                {file.client_modified ? new Date(file.client_modified).toLocaleDateString() : '-'}
+                {file.client_modified ? new Date(file.client_modified).toLocaleDateString('es', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}
+            </td>
+            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                {(file.server_modified || file.client_modified)
+                    ? (() => {
+                        const d = new Date(file.server_modified || file.client_modified!);
+                        return (
+                            <span className="flex flex-col leading-tight">
+                                <span>{d.toLocaleDateString('es', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                                <span className="text-xs text-blue-500 font-medium">{d.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}</span>
+                            </span>
+                        );
+                      })()
+                    : '-'}
             </td>
             <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex space-x-1 items-center">
