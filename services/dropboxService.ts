@@ -277,10 +277,11 @@ export class DropboxService {
   async uploadFile(path: string, file: File, explicitPath?: string): Promise<DropboxFile> {
     const safeName = this.safeFileName(file);
 
-    // Determine the full destination path
+    // Normalize path: strip trailing slashes, treat '' and '/' both as root
+    const basePath = path.replace(/\/+$/, '');
     const dropboxPath = explicitPath
       ? explicitPath
-      : (path === '/' ? `/${safeName}` : `${path}/${safeName}`);
+      : (basePath === '' ? `/${safeName}` : `${basePath}/${safeName}`);
 
     if (file.size > this.UPLOAD_THRESHOLD) {
       return this.uploadLargeFile(dropboxPath, file);
@@ -292,9 +293,10 @@ export class DropboxService {
       'Content-Type': 'application/octet-stream',
       'Dropbox-API-Arg': this.toDropboxApiArg({
         path: dropboxPath,
-        mode: 'overwrite',
+        mode: { '.tag': 'overwrite' },
         autorename: false,
         mute: false,
+        strict_conflict: false,
       }),
     };
 
@@ -365,9 +367,10 @@ export class DropboxService {
           cursor: { session_id: sessionId, offset },
           commit: {
             path: dropboxPath,
-            mode: 'overwrite',
+            mode: { '.tag': 'overwrite' },
             autorename: false,
             mute: false,
+            strict_conflict: false,
           },
         }),
       },

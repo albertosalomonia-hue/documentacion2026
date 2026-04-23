@@ -800,7 +800,8 @@ const App: React.FC = () => {
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             if (file.webkitRelativePath) {
-                const fullPath = [currentPath === '/' ? '' : currentPath, file.webkitRelativePath].join('/');
+                const basePath = currentPath.replace(/\/+$/, '');
+                const fullPath = (basePath === '' ? '' : basePath) + '/' + file.webkitRelativePath;
 
                 // Mark as uploading
                 setUploadProgress(prev => {
