@@ -12,7 +12,7 @@ import { DropboxFile, PlanGroup, User, FileTag, PermissionType } from './types';
 import { DropboxService, getDropboxAuthUrl, parseAuthTokenFromUrl, parseAuthCodeFromUrl } from './services/dropboxService';
 import { MockAuthService } from './services/mockAuth';
 import { NotificationService } from './services/notificationService';
-import { UploadCloud, CheckCircle, AlertTriangle, RefreshCw, Trash2, Lock, ShieldAlert, FolderPlus, Home, ChevronRight, Tag, Plus, X, ArrowRight, FileText, Folder as FolderIcon, Loader2, Link2, Shield, Wrench, Edit2 } from 'lucide-react';
+import { UploadCloud, CheckCircle, AlertTriangle, RefreshCw, Trash2, Lock, ShieldAlert, FolderPlus, Home, ChevronRight, Tag, Plus, X, ArrowRight, FileText, Folder as FolderIcon, Loader2, Link2, Shield, Wrench, Edit2, Share2, ExternalLink, Pencil, Download } from 'lucide-react';
 
 const PROVIDED_TOKEN = process.env.NEXT_PUBLIC_DROPBOX_ACCESS_TOKEN;
 const CONFIG_ROOT = process.env.NEXT_PUBLIC_DROPBOX_ROOT_PATH || '';
@@ -78,6 +78,17 @@ const App: React.FC = () => {
       current: number;
       total: number;
   }>({ isOpen: false, files: [], current: 0, total: 0 });
+
+  const [contextMenu, setContextMenu] = useState<{
+      isOpen: boolean;
+      x: number;
+      y: number;
+      file: DropboxFile | null;
+      canDelete: boolean;
+      canDownload: boolean;
+      canShare: boolean;
+      canRename: boolean;
+  }>({ isOpen: false, x: 0, y: 0, file: null, canDelete: false, canDownload: false, canShare: false, canRename: false });
 
   // 1. Initialize Auth and Token
   useEffect(() => {
@@ -368,9 +379,39 @@ const App: React.FC = () => {
       }) ?? false;
   };
 
-  const initiateDropboxAuth = async () => { 
+  const getEditorInfo = (fileName: string): { name: string; color: string } => {
+      if (fileName.match(/\.(docx|doc)$/i)) return { name: 'Microsoft Word', color: 'text-blue-600' };
+      if (fileName.match(/\.(xlsx|xls|csv)$/i)) return { name: 'Microsoft Excel', color: 'text-green-600' };
+      if (fileName.match(/\.(pptx|ppt)$/i)) return { name: 'Microsoft PowerPoint', color: 'text-orange-500' };
+      if (fileName.match(/\.(pdf)$/i)) return { name: 'Adobe Acrobat / PDF', color: 'text-red-600' };
+      if (fileName.match(/\.(jpg|jpeg|png|gif|bmp|webp|svg)$/i)) return { name: 'Editor de imágenes', color: 'text-purple-600' };
+      if (fileName.match(/\.(mp4|avi|mov|mkv|wmv)$/i)) return { name: 'Reproductor de video', color: 'text-pink-500' };
+      if (fileName.match(/\.(mp3|wav|flac|aac)$/i)) return { name: 'Reproductor de audio', color: 'text-yellow-500' };
+      if (fileName.match(/\.(txt|md|log)$/i)) return { name: 'Editor de texto', color: 'text-gray-600' };
+      if (fileName.match(/\.(zip|rar|7z|tar|gz)$/i)) return { name: 'Compresor de archivos', color: 'text-amber-600' };
+      if (fileName.match(/\.(js|ts|jsx|tsx|py|java|cs|cpp|html|css)$/i)) return { name: 'Editor de código', color: 'text-indigo-600' };
+      return { name: 'Programa predeterminado', color: 'text-gray-500' };
+  };
+
+  const handleContextMenuOpen = (file: DropboxFile, x: number, y: number) => {
+      const perms = getEffectivePermissions(file, currentUser!);
+      const isFolder = file['.tag'] === 'folder';
+      const canShare = !!(currentUser && (currentUser.role === 'admin' || (currentUser.role === 'jefe' && (perms.includes('write') || perms.includes('read')))));
+      setContextMenu({
+          isOpen: true,
+          x,
+          y,
+          file,
+          canDelete: perms.includes('delete'),
+          canDownload: perms.includes('download') && !isFolder,
+          canShare,
+          canRename: isFolder ? canRenameFolder(file, currentUser!) : false,
+      });
+  };
+
+  const initiateDropboxAuth = async () => {
       const url = await getDropboxAuthUrl();
-      window.location.href = url; 
+      window.location.href = url;
   };
 
   const refreshFiles = useCallback(async () => {
@@ -447,6 +488,17 @@ const App: React.FC = () => {
         setFiles([]);
     }
   }, [currentUser, token, refreshFiles, currentPath, fileTagsMap, currentView]);
+
+  useEffect(() => {
+      const handleClick = () => setContextMenu(prev => ({ ...prev, isOpen: false }));
+      const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenu(prev => ({ ...prev, isOpen: false })); };
+      document.addEventListener('click', handleClick);
+      document.addEventListener('keydown', handleEsc);
+      return () => {
+          document.removeEventListener('click', handleClick);
+          document.removeEventListener('keydown', handleEsc);
+      };
+  }, []);
 
   const handleNavigate = (path: string) => {
       if (isRestrictedPath(path)) {
@@ -545,6 +597,11 @@ const App: React.FC = () => {
 
   const processFileUpload = async (files: FileList | File[]) => {
     if (!token) { alert("Sin conexión a Dropbox."); return; }
+
+    if (!canCreateFolderInPath(currentPath, currentUser!)) {
+        alert("No tienes permisos para subir archivos a esta carpeta.");
+        return;
+    }
 
     const fileArray = Array.from(files);
     const fileEntries = fileArray.map(f => ({ name: f.name, status: 'pending' as const }));
@@ -805,6 +862,95 @@ const App: React.FC = () => {
       {shareModalOpen.isOpen && shareModalOpen.file && (<ShareModal file={shareModalOpen.file} isOpen={shareModalOpen.isOpen} onClose={() => setShareModalOpen({file: null, isOpen: false})} currentShares={{}} onSave={() => {}} currentUser={currentUser} />)}
       {previewFile && <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onDownload={handleDownload} />}
 
+      {/* Context Menu */}
+      {contextMenu.isOpen && contextMenu.file && (
+          <div
+              className="fixed z-[200] bg-white border border-gray-200 rounded-lg shadow-xl py-1 min-w-[220px] select-none"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+              onClick={e => e.stopPropagation()}
+          >
+              {contextMenu.file['.tag'] !== 'folder' ? (
+                  <>
+                      <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 rounded-t-lg">
+                          <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Abrir / Editar con</div>
+                          <div className={`text-sm font-semibold ${getEditorInfo(contextMenu.file.name).color}`}>
+                              {getEditorInfo(contextMenu.file.name).name}
+                          </div>
+                      </div>
+                      <div className="py-1">
+                          <button
+                              className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-blue-50 flex items-center gap-2.5 transition-colors"
+                              onClick={() => { window.open(getDropboxService().getWebUrl(contextMenu.file!), '_blank'); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                              <ExternalLink size={14} className="text-gray-400 shrink-0" />
+                              <span>Abrir en Dropbox</span>
+                          </button>
+                          {contextMenu.file.name.match(/\.(docx|doc|xlsx|xls|pptx|ppt)$/i) && (
+                              <button
+                                  className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-blue-50 flex items-center gap-2.5 transition-colors"
+                                  onClick={() => { window.open(getDropboxService().getWebUrl(contextMenu.file!), '_blank'); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                                  <Edit2 size={14} className="text-blue-500 shrink-0" />
+                                  <span>Editar en línea (Office)</span>
+                              </button>
+                          )}
+                          {contextMenu.canDownload && (
+                              <button
+                                  className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-green-50 flex items-center gap-2.5 transition-colors"
+                                  onClick={() => { handleDownload(contextMenu.file!); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                                  <Download size={14} className="text-green-500 shrink-0" />
+                                  <span>Descargar para editar</span>
+                              </button>
+                          )}
+                      </div>
+                      <div className="border-t border-gray-100" />
+                  </>
+              ) : (
+                  <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 rounded-t-lg">
+                      <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Carpeta</div>
+                      <div className="text-sm font-semibold text-yellow-700">{contextMenu.file.name}</div>
+                  </div>
+              )}
+              <div className="py-1">
+                  <button
+                      className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-gray-50 flex items-center gap-2.5 transition-colors"
+                      onClick={() => { setTagModalOpen({ file: contextMenu.file!, isOpen: true }); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                      <Tag size={14} className="text-yellow-500 shrink-0" />
+                      <span>Asignar etiqueta</span>
+                  </button>
+                  {contextMenu.canShare && (
+                      <button
+                          className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-gray-50 flex items-center gap-2.5 transition-colors"
+                          onClick={() => { setShareModalOpen({ file: contextMenu.file!, isOpen: true }); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                          <Share2 size={14} className="text-blue-500 shrink-0" />
+                          <span>Compartir</span>
+                      </button>
+                  )}
+              </div>
+              {(contextMenu.canRename || contextMenu.canDelete) && (
+                  <>
+                      <div className="border-t border-gray-100" />
+                      <div className="py-1">
+                          {contextMenu.canRename && (
+                              <button
+                                  className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-orange-50 flex items-center gap-2.5 transition-colors"
+                                  onClick={() => { setRenameModal({ isOpen: true, folder: contextMenu.file!, isRenaming: false }); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                                  <Pencil size={14} className="text-orange-500 shrink-0" />
+                                  <span>Renombrar</span>
+                              </button>
+                          )}
+                          {contextMenu.canDelete && (
+                              <button
+                                  className="w-full px-4 py-2 text-sm text-left text-red-600 hover:bg-red-50 flex items-center gap-2.5 transition-colors"
+                                  onClick={() => { handleDelete(contextMenu.file!); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                                  <Trash2 size={14} className="shrink-0" />
+                                  <span>Eliminar</span>
+                              </button>
+                          )}
+                      </div>
+                  </>
+              )}
+          </div>
+      )}
+
       {/* Upload Progress Modal */}
       {uploadProgress.isOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -992,12 +1138,12 @@ const App: React.FC = () => {
                                 {folders.map(folder => {
                                     const perms = getEffectivePermissions(folder, currentUser);
                                     const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanListItem key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
+                                    return <PlanListItem key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
                                 })}
                                 {regularFiles.map(file => {
                                     const perms = getEffectivePermissions(file, currentUser);
                                     const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanListItem key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} />;
+                                    return <PlanListItem key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} />;
                                 })}
                             </tbody>
                         </table>
@@ -1011,7 +1157,7 @@ const App: React.FC = () => {
                                 {folders.map(folder => {
                                     const perms = getEffectivePermissions(folder, currentUser);
                                     const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanCard key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
+                                    return <PlanCard key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
                                 })}
                             </div>
                         </div>
@@ -1022,7 +1168,7 @@ const App: React.FC = () => {
                             {regularFiles.map((file) => {
                                 const perms = getEffectivePermissions(file, currentUser);
                                 const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && (perms.includes('write') || perms.includes('read'))); 
-                                return <PlanCard key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} />;
+                                return <PlanCard key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} />;
                             })}
                             <AddPlanCard onClick={handleManualUploadClick} />
                         </div>

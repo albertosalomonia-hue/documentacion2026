@@ -14,6 +14,7 @@ interface PlanCardProps {
   onDownload?: (file: DropboxFile) => void;
   onMove?: (sourceFile: DropboxFile, targetFolder: DropboxFile) => void;
   onRename?: (file: DropboxFile) => void;
+  onContextMenuOpen?: (file: DropboxFile, x: number, y: number) => void;
   canDelete?: boolean;
   canRename?: boolean;
   allTags?: FileTag[];
@@ -39,6 +40,7 @@ const PlanCard: React.FC<PlanCardProps> = ({
     onDownload,
     onMove,
     onRename,
+    onContextMenuOpen,
     canDelete = false,
     canRename = false,
     allTags = [],
@@ -81,7 +83,11 @@ const PlanCard: React.FC<PlanCardProps> = ({
 
   const handleContextMenu = (e: React.MouseEvent) => {
       e.preventDefault();
-      if (onAssignTag) onAssignTag(file);
+      if (onContextMenuOpen) {
+          onContextMenuOpen(file, e.clientX, e.clientY);
+      } else if (onAssignTag) {
+          onAssignTag(file);
+      }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -275,6 +281,7 @@ export const PlanListItem: React.FC<PlanCardProps> = ({
     onDownload,
     onMove,
     onRename,
+    onContextMenuOpen,
     canDelete = false,
     canRename = false,
     allTags = [],
@@ -324,7 +331,7 @@ export const PlanListItem: React.FC<PlanCardProps> = ({
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onClick={() => onClick(file)}
-            onContextMenu={(e) => { e.preventDefault(); if (onAssignTag) onAssignTag(file); }}
+            onContextMenu={(e) => { e.preventDefault(); if (onContextMenuOpen) { onContextMenuOpen(file, e.clientX, e.clientY); } else if (onAssignTag) { onAssignTag(file); } }}
             className={`
                 border-b border-gray-100 cursor-pointer transition-colors
                 ${isDragOver ? 'bg-blue-50 border-blue-200' : 'hover:bg-gray-50 bg-white'}
