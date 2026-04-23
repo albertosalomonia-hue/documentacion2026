@@ -734,31 +734,22 @@ const App: React.FC = () => {
       try {
           const service = getDropboxService();
           const link = await service.getTemporaryLink(file.path_lower);
-          const ext = (file.name.split('.').pop() || '').toLowerCase();
 
-          let protocolUri: string | null = null;
-          if (ext === 'docx' || ext === 'doc') {
-              protocolUri = `ms-word:ofe|u|${encodeURIComponent(link)}`;
-          } else if (ext === 'xlsx' || ext === 'xls') {
-              protocolUri = `ms-excel:ofe|u|${encodeURIComponent(link)}`;
-          } else if (ext === 'pptx' || ext === 'ppt') {
-              protocolUri = `ms-powerpoint:ofe|u|${encodeURIComponent(link)}`;
-          }
+          // Fetch the file as a blob so the browser saves it as a local file.
+          // This avoids Office's "Restricted Sites Zone" error that occurs when
+          // opening remote URLs directly via the ms-word:/ms-excel: protocol.
+          const response = await fetch(link);
+          if (!response.ok) throw new Error('No se pudo descargar el archivo');
+          const blob = await response.blob();
 
-          if (protocolUri) {
-              const a = document.createElement('a');
-              a.href = protocolUri;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-          } else {
-              const a = document.createElement('a');
-              a.href = link;
-              a.download = file.name;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-          }
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = file.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
 
           await NotificationService.create('system', `Abrió archivo: ${file.name}`, currentUser?.username || 'unknown');
       } catch (err: any) { alert('Error al abrir: ' + err.message); }
