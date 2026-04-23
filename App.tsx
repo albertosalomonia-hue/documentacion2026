@@ -735,21 +735,19 @@ const App: React.FC = () => {
           const service = getDropboxService();
           const link = await service.getTemporaryLink(file.path_lower);
 
-          // Fetch the file as a blob so the browser saves it as a local file.
-          // This avoids Office's "Restricted Sites Zone" error that occurs when
-          // opening remote URLs directly via the ms-word:/ms-excel: protocol.
-          const response = await fetch(link);
-          if (!response.ok) throw new Error('No se pudo descargar el archivo');
-          const blob = await response.blob();
-
-          const blobUrl = URL.createObjectURL(blob);
+          // Use the direct Dropbox link so the browser saves a real local copy.
+          // Dropbox serves the file with Content-Disposition: attachment, so
+          // the browser always downloads it to disk regardless of the `download`
+          // attribute.  Once on disk the file opens in the locally installed
+          // program without any Office "Restricted Sites Zone" error (it is now
+          // a local file, not a remote URL).
           const a = document.createElement('a');
-          a.href = blobUrl;
+          a.href = link;
           a.download = file.name;
+          a.rel = 'noopener noreferrer';
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
 
           await NotificationService.create('system', `Abrió archivo: ${file.name}`, currentUser?.username || 'unknown');
       } catch (err: any) { alert('Error al abrir: ' + err.message); }
