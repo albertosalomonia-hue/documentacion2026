@@ -693,6 +693,7 @@ const App: React.FC = () => {
   };
 
   const handleMoveFileRequest = (sourceFile: DropboxFile, targetFolder: DropboxFile) => {
+      console.log('[Move] Requested:', sourceFile.name, '→', targetFolder.name);
       setMoveModal({ isOpen: true, source: sourceFile, target: targetFolder, isMoving: false });
   };
 
@@ -709,20 +710,25 @@ const App: React.FC = () => {
 
   const confirmMoveAction = async () => {
       const { source, target } = moveModal;
-      if (!source || !target || !token) return;
-      const newPath = `${target.path_lower}/${source.name}`;
+      if (!source || !target) return;
+      if (!token) { alert('Sin conexión a Dropbox. Recarga la página.'); return; }
+      const targetBase = target.path_lower || '';
+      const newPath = targetBase === '' ? `/${source.name}` : `${targetBase}/${source.name}`;
+      console.log('[Move] from:', source.path_lower, '→ to:', newPath);
       setMoveModal(prev => ({ ...prev, isMoving: true }));
       try {
           const service = getDropboxService();
           await service.moveFile(source.path_lower, newPath);
-          
+
           // NOTIFY MOVE
           await NotificationService.create('upload', `Movió "${source.name}" a "${target.name}"`, currentUser?.username || 'unknown');
-          
-          await refreshFiles();
+
           setMoveModal({ isOpen: false, source: null, target: null, isMoving: false });
+          // Navigate to destination so the user sees the moved item
+          handleNavigate(targetBase);
       } catch (err: any) {
-          alert(`Error: ${err.message}`);
+          console.error('[Move] Error:', err);
+          alert(`Error al mover: ${err.message}`);
           setMoveModal(prev => ({ ...prev, isMoving: false }));
       }
   };
