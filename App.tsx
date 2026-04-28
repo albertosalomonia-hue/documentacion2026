@@ -888,7 +888,14 @@ const App: React.FC = () => {
     >
       {/* Modals */}
       {shareModalOpen.isOpen && shareModalOpen.file && (<ShareModal file={shareModalOpen.file} isOpen={shareModalOpen.isOpen} onClose={() => setShareModalOpen({file: null, isOpen: false})} currentShares={{}} onSave={() => {}} currentUser={currentUser} />)}
-      {previewFile && <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onDownload={handleDownload} />}
+      {previewFile && (
+        <FilePreviewModal
+          file={previewFile}
+          onClose={() => setPreviewFile(null)}
+          onDownload={handleDownload}
+          getPreviewUrl={() => getDropboxService().getTemporaryLink(previewFile.path_lower)}
+        />
+      )}
 
       {/* Context Menu */}
       {contextMenu.isOpen && contextMenu.file && (
