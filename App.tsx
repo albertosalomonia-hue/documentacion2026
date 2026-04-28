@@ -57,6 +57,7 @@ const App: React.FC = () => {
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [internalDraggedFile, setInternalDraggedFile] = useState<DropboxFile | null>(null);
   const [isOverTrash, setIsOverTrash] = useState(false);
+  const [dragOverBreadcrumb, setDragOverBreadcrumb] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<DropboxFile | null>(null);
 
   const [moveModal, setMoveModal] = useState<{
@@ -692,25 +693,42 @@ const App: React.FC = () => {
   };
 
   const handleMoveFileRequest = (sourceFile: DropboxFile, targetFolder: DropboxFile) => {
+      console.log('[Move] Requested:', sourceFile.name, '→', targetFolder.name);
       setMoveModal({ isOpen: true, source: sourceFile, target: targetFolder, isMoving: false });
+  };
+
+  const handleMoveToBreadcrumb = (sourceFile: DropboxFile, targetPath: string, targetName: string) => {
+      const syntheticTarget: DropboxFile = {
+          id: `breadcrumb-${targetPath || 'root'}`,
+          name: targetName,
+          path_lower: targetPath,
+          path_display: targetPath,
+          '.tag': 'folder',
+      };
+      setMoveModal({ isOpen: true, source: sourceFile, target: syntheticTarget, isMoving: false });
   };
 
   const confirmMoveAction = async () => {
       const { source, target } = moveModal;
-      if (!source || !target || !token) return;
-      const newPath = `${target.path_lower}/${source.name}`;
+      if (!source || !target) return;
+      if (!token) { alert('Sin conexión a Dropbox. Recarga la página.'); return; }
+      const targetBase = target.path_lower || '';
+      const newPath = targetBase === '' ? `/${source.name}` : `${targetBase}/${source.name}`;
+      console.log('[Move] from:', source.path_lower, '→ to:', newPath);
       setMoveModal(prev => ({ ...prev, isMoving: true }));
       try {
           const service = getDropboxService();
           await service.moveFile(source.path_lower, newPath);
-          
+
           // NOTIFY MOVE
           await NotificationService.create('upload', `Movió "${source.name}" a "${target.name}"`, currentUser?.username || 'unknown');
-          
-          await refreshFiles();
+
           setMoveModal({ isOpen: false, source: null, target: null, isMoving: false });
+          // Navigate to destination so the user sees the moved item
+          handleNavigate(targetBase);
       } catch (err: any) {
-          alert(`Error: ${err.message}`);
+          console.error('[Move] Error:', err);
+          alert(`Error al mover: ${err.message}`);
           setMoveModal(prev => ({ ...prev, isMoving: false }));
       }
   };
@@ -895,6 +913,58 @@ const App: React.FC = () => {
           onDownload={handleDownload}
           getPreviewUrl={() => getDropboxService().getTemporaryLink(previewFile.path_lower)}
         />
+      )}
+
+      {/* Move Confirmation Modal */}
+      {moveModal.isOpen && moveModal.source && moveModal.target && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+                  <div className="flex items-center mb-5">
+                      <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mr-3 flex-shrink-0">
+                          <ArrowRight className="text-blue-600" size={20} />
+                      </div>
+                      <div>
+                          <h3 className="text-lg font-bold text-gray-900">Mover elemento</h3>
+                          <p className="text-sm text-gray-500">Se moverá en Dropbox</p>
+                      </div>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-4 mb-6 space-y-3 border border-gray-100">
+                      <div className="flex items-center gap-2 text-sm">
+                          <span className="text-gray-400 w-16 flex-shrink-0">Desde:</span>
+                          <span className="font-medium text-gray-900 flex items-center gap-1.5 truncate">
+                              {moveModal.source['.tag'] === 'folder'
+                                  ? <FolderIcon size={14} className="text-yellow-500 flex-shrink-0" />
+                                  : <FileText size={14} className="text-blue-500 flex-shrink-0" />}
+                              {moveModal.source.name}
+                          </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
+                          <span className="text-gray-400 w-16 flex-shrink-0">Hacia:</span>
+                          <span className="font-semibold text-blue-700 flex items-center gap-1.5 truncate">
+                              <FolderIcon size={14} className="text-yellow-500 flex-shrink-0" />
+                              {moveModal.target.name}
+                          </span>
+                      </div>
+                  </div>
+                  <div className="flex gap-3">
+                      <button
+                          onClick={() => setMoveModal({ isOpen: false, source: null, target: null, isMoving: false })}
+                          disabled={moveModal.isMoving}
+                          className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button
+                          onClick={confirmMoveAction}
+                          disabled={moveModal.isMoving}
+                          className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                      >
+                          {moveModal.isMoving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                          {moveModal.isMoving ? 'Moviendo...' : 'Confirmar Mover'}
+                      </button>
+                  </div>
+              </div>
+          </div>
       )}
 
       {/* Context Menu */}
@@ -1093,13 +1163,26 @@ const App: React.FC = () => {
             
             <div className="flex items-center justify-between mb-6 bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
                 <div className="flex items-center space-x-2 text-sm text-gray-600 overflow-x-auto">
-                    <button onClick={() => handleNavigate('')} className={`p-1.5 rounded hover:bg-gray-100 ${currentPath === '' ? 'text-blue-600 font-bold bg-blue-50' : ''}`}><Home size={16} /></button>
+                    <button
+                        onClick={() => handleNavigate('')}
+                        onDragOver={(e) => { if (internalDraggedFile && currentPath !== '') { e.preventDefault(); setDragOverBreadcrumb('__root__'); }}}
+                        onDragLeave={() => setDragOverBreadcrumb(null)}
+                        onDrop={(e) => { e.preventDefault(); setDragOverBreadcrumb(null); if (internalDraggedFile && currentPath !== '') handleMoveToBreadcrumb(internalDraggedFile, '', 'Inicio'); }}
+                        className={`p-1.5 rounded transition-colors ${currentPath === '' ? 'text-blue-600 font-bold bg-blue-50' : ''} ${dragOverBreadcrumb === '__root__' ? 'bg-blue-100 ring-2 ring-blue-400 text-blue-700' : 'hover:bg-gray-100'}`}
+                    ><Home size={16} /></button>
                     {breadcrumbs.map((part, index) => {
                         const fullPath = '/' + breadcrumbs.slice(0, index + 1).join('/');
+                        const isLast = index === breadcrumbs.length - 1;
                         return (
                             <div key={index} className="flex items-center">
                                 <ChevronRight size={14} className="text-gray-400 mx-1" />
-                                <button onClick={() => handleNavigate(fullPath)} className="hover:bg-gray-100 px-2 py-1 rounded transition-colors whitespace-nowrap">{part}</button>
+                                <button
+                                    onClick={() => handleNavigate(fullPath)}
+                                    onDragOver={(e) => { if (internalDraggedFile && !isLast) { e.preventDefault(); setDragOverBreadcrumb(fullPath); }}}
+                                    onDragLeave={() => setDragOverBreadcrumb(null)}
+                                    onDrop={(e) => { e.preventDefault(); setDragOverBreadcrumb(null); if (internalDraggedFile && !isLast) handleMoveToBreadcrumb(internalDraggedFile, fullPath, part); }}
+                                    className={`px-2 py-1 rounded transition-colors whitespace-nowrap ${dragOverBreadcrumb === fullPath ? 'bg-blue-100 ring-2 ring-blue-400 text-blue-700 font-semibold' : 'hover:bg-gray-100'}`}
+                                >{part}</button>
                             </div>
                         );
                     })}
@@ -1190,12 +1273,12 @@ const App: React.FC = () => {
                                 {folders.map(folder => {
                                     const perms = getEffectivePermissions(folder, currentUser);
                                     const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanListItem key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
+                                    return <PlanListItem key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
                                 })}
                                 {regularFiles.map(file => {
                                     const perms = getEffectivePermissions(file, currentUser);
                                     const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanListItem key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} />;
+                                    return <PlanListItem key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} />;
                                 })}
                             </tbody>
                         </table>
@@ -1209,7 +1292,7 @@ const App: React.FC = () => {
                                 {folders.map(folder => {
                                     const perms = getEffectivePermissions(folder, currentUser);
                                     const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanCard key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
+                                    return <PlanCard key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
                                 })}
                             </div>
                         </div>
@@ -1220,7 +1303,7 @@ const App: React.FC = () => {
                             {regularFiles.map((file) => {
                                 const perms = getEffectivePermissions(file, currentUser);
                                 const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && (perms.includes('write') || perms.includes('read'))); 
-                                return <PlanCard key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => setInternalDraggedFile(null)} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} />;
+                                return <PlanCard key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} />;
                             })}
                             <AddPlanCard onClick={handleManualUploadClick} />
                         </div>
