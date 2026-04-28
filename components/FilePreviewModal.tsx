@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Download, Loader2, FileText } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Download, Loader2, FileText, AlertCircle } from 'lucide-react';
 import { DropboxFile } from '../types';
 
 interface FilePreviewModalProps {
@@ -10,43 +10,70 @@ interface FilePreviewModalProps {
 }
 
 const IMAGE_TYPES = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
-const PDF_TYPES = ['pdf'];
-const VIDEO_TYPES = ['mp4', 'webm', 'mov'];
+const PDF_TYPES   = ['pdf'];
+const VIDEO_TYPES = ['mp4', 'webm', 'mov', 'avi'];
 const AUDIO_TYPES = ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac'];
-const TEXT_TYPES = ['txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'sql', 'yaml', 'yml', 'log', 'toml', 'ini', 'cfg'];
+const TEXT_TYPES  = ['txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'sql', 'yaml', 'yml', 'log', 'toml', 'ini', 'cfg'];
 
-const getExt = (name: string) => name.split('.').pop()?.toLowerCase() || '';
+const getExt = (name: string) => name.split('.').pop()?.toLowerCase() ?? '';
 
 const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClose, onDownload, getPreviewUrl }) => {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const blobRef = useRef<string | null>(null);
 
   const ext = getExt(file.name);
   const isImage = IMAGE_TYPES.includes(ext);
-  const isPdf = PDF_TYPES.includes(ext);
+  const isPdf   = PDF_TYPES.includes(ext);
   const isVideo = VIDEO_TYPES.includes(ext);
   const isAudio = AUDIO_TYPES.includes(ext);
-  const isText = TEXT_TYPES.includes(ext);
+  const isText  = TEXT_TYPES.includes(ext);
   const canPreview = isImage || isPdf || isVideo || isAudio || isText;
 
   useEffect(() => {
-    if (!canPreview) {
-      setLoading(false);
-      return;
-    }
-    getPreviewUrl()
-      .then(async (url) => {
-        setPreviewUrl(url);
+    if (!canPreview) { setLoading(false); return; }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const url = await getPreviewUrl();
+        if (cancelled) return;
+
         if (isText) {
+          // Fetch the text content directly
           const res = await fetch(url);
-          if (!res.ok) throw new Error();
-          setTextContent(await res.text());
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const text = await res.text();
+          if (!cancelled) { setTextContent(text); setLoading(false); }
+
+        } else if (isPdf) {
+          // Fetch as blob to bypass Content-Disposition: attachment in iframes
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          const burl = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+          blobRef.current = burl;
+          if (!cancelled) { setObjectUrl(burl); setLoading(false); }
+
+        } else {
+          // Images, video, audio: direct URL works fine in <img>/<video>/<audio>
+          if (!cancelled) { setObjectUrl(url); setLoading(false); }
         }
-      })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
+      } catch (e: any) {
+        if (!cancelled) {
+          setErrorMsg(e?.message ?? 'Error desconocido');
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (blobRef.current) { URL.revokeObjectURL(blobRef.current); blobRef.current = null; }
+    };
   }, []);
 
   const renderContent = () => {
@@ -58,47 +85,83 @@ const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClose, onDo
         </div>
       );
     }
-    if (error) {
-      return <p className="text-center text-red-500 py-16 text-sm">No se pudo cargar la vista previa.</p>;
+
+    if (errorMsg) {
+      return (
+        <div className="flex flex-col items-center justify-center h-64 gap-3 text-red-500">
+          <AlertCircle size={36} />
+          <p className="text-sm font-medium">No se pudo cargar la vista previa</p>
+          <p className="text-xs text-red-400">{errorMsg}</p>
+        </div>
+      );
     }
+
     if (!canPreview) {
       return (
         <div className="flex flex-col items-center justify-center h-64 gap-3 text-gray-400">
           <FileText size={48} className="opacity-40" />
-          <p className="text-sm">Vista previa no disponible para este tipo de archivo.</p>
-          <p className="text-xs text-gray-400">Descarga el archivo para abrirlo.</p>
+          <p className="text-sm">Vista previa no disponible para archivos <strong>.{ext || 'de este tipo'}</strong>.</p>
+          <p className="text-xs">Descarga el archivo para abrirlo.</p>
         </div>
       );
     }
-    if (isImage && previewUrl) {
+
+    if (isImage && objectUrl) {
       return (
-        <div className="flex items-center justify-center">
-          <img src={previewUrl} alt={file.name} className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-sm" />
+        <div className="flex items-center justify-center min-h-40">
+          <img
+            src={objectUrl}
+            alt={file.name}
+            className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-sm"
+            onError={() => setErrorMsg('No se pudo mostrar la imagen.')}
+          />
         </div>
       );
     }
-    if (isPdf && previewUrl) {
-      return <iframe src={previewUrl} className="w-full h-[70vh] rounded border-0" title={file.name} />;
-    }
-    if (isVideo && previewUrl) {
+
+    if (isPdf && objectUrl) {
       return (
-        <video src={previewUrl} controls className="w-full max-h-[70vh] rounded-lg" />
+        <iframe
+          src={objectUrl}
+          className="w-full rounded border-0"
+          style={{ height: '72vh' }}
+          title={file.name}
+        />
       );
     }
-    if (isAudio && previewUrl) {
+
+    if (isVideo && objectUrl) {
+      return (
+        <video
+          src={objectUrl}
+          controls
+          className="w-full max-h-[70vh] rounded-lg"
+          onError={() => setErrorMsg('No se pudo reproducir el video.')}
+        />
+      );
+    }
+
+    if (isAudio && objectUrl) {
       return (
         <div className="flex flex-col items-center justify-center h-40 gap-4">
-          <audio src={previewUrl} controls className="w-full max-w-lg" />
+          <audio
+            src={objectUrl}
+            controls
+            className="w-full max-w-lg"
+            onError={() => setErrorMsg('No se pudo reproducir el audio.')}
+          />
         </div>
       );
     }
+
     if (isText) {
       return (
         <pre className="bg-gray-50 rounded-lg p-4 overflow-auto max-h-[70vh] text-xs text-gray-800 font-mono whitespace-pre-wrap break-words leading-relaxed">
-          {textContent ?? ''}
+          {textContent ?? '(archivo vacío)'}
         </pre>
       );
     }
+
     return null;
   };
 
@@ -110,7 +173,9 @@ const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClose, onDo
       <div className="bg-white rounded-xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-shrink-0">
-          <h2 className="text-base font-semibold text-gray-900 truncate mr-4">{file.name}</h2>
+          <h2 className="text-base font-semibold text-gray-900 truncate mr-4" title={file.name}>
+            {file.name}
+          </h2>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={() => onDownload(file)}
@@ -128,7 +193,7 @@ const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClose, onDo
           </div>
         </div>
 
-        {/* Preview */}
+        {/* Preview area */}
         <div className="flex-1 overflow-auto p-5">
           {renderContent()}
         </div>
