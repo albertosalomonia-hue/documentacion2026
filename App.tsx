@@ -4,6 +4,7 @@ import TopBar from './components/TopBar';
 import PlanCard, { AddPlanCard, PlanListItem } from './components/PlanCard';
 import LoginScreen from './components/LoginScreen';
 import FilePreviewModal from './components/FilePreviewModal';
+import ExcelEditorModal from './components/ExcelEditorModal';
 import ForcePasswordChangeModal from './components/ForcePasswordChangeModal';
 import UserManagement from './components/UserManagement';
 import UserSettings from './components/UserSettings';
@@ -59,6 +60,7 @@ const App: React.FC = () => {
   const [isOverTrash, setIsOverTrash] = useState(false);
   const [dragOverBreadcrumb, setDragOverBreadcrumb] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<DropboxFile | null>(null);
+  const [excelEditFile, setExcelEditFile] = useState<DropboxFile | null>(null);
 
   const [moveModal, setMoveModal] = useState<{
       isOpen: boolean;
@@ -512,6 +514,8 @@ const App: React.FC = () => {
   const handleCardClick = (file: DropboxFile) => {
       if (file['.tag'] === 'folder') {
           handleNavigate(file.path_lower);
+      } else if (file.name.match(/\.(xlsx|xls|csv)$/i)) {
+          setExcelEditFile(file);
       } else {
           setPreviewFile(file);
       }
@@ -733,6 +737,19 @@ const App: React.FC = () => {
       }
   };
 
+  const handleExcelSave = async (file: DropboxFile, blob: Blob) => {
+      if (!token) return;
+      try {
+          const excelFile = new File([blob], file.name, { type: blob.type });
+          const service = getDropboxService();
+          await service.uploadFile('', excelFile, file.path_lower);
+          await NotificationService.create('upload', `Editó archivo: ${file.name}`, currentUser?.username || 'unknown');
+          await refreshFiles();
+      } catch (err: any) {
+          throw new Error(err.message ?? 'Error al guardar');
+      }
+  };
+
   const handleDownload = async (file: DropboxFile) => {
       if (!token) return;
       try {
@@ -912,6 +929,16 @@ const App: React.FC = () => {
           onClose={() => setPreviewFile(null)}
           onDownload={handleDownload}
           getPreviewUrl={() => getDropboxService().getTemporaryLink(previewFile.path_lower)}
+        />
+      )}
+      {excelEditFile && (
+        <ExcelEditorModal
+          file={excelEditFile}
+          onClose={() => setExcelEditFile(null)}
+          onDownload={handleDownload}
+          getPreviewUrl={() => getDropboxService().getTemporaryLink(excelEditFile.path_lower)}
+          onSave={handleExcelSave}
+          canEdit={currentUser ? getEffectivePermissions(excelEditFile, currentUser).includes('write') : false}
         />
       )}
 
