@@ -514,7 +514,7 @@ const App: React.FC = () => {
   const handleCardClick = (file: DropboxFile) => {
       if (file['.tag'] === 'folder') {
           handleNavigate(file.path_lower);
-      } else if (file.name.match(/\.(xlsx|xls|csv)$/i)) {
+      } else if (file.name.match(/\.(xlsx|xls)$/i)) {
           setExcelEditFile(file);
       } else {
           setPreviewFile(file);

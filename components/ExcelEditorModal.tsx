@@ -45,7 +45,7 @@ const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         const buffer = await res.arrayBuffer();
         if (cancelled) return;
 
-        const wb = XLSX.read(buffer, { type: 'array' });
+        const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
         const first = wb.SheetNames[0];
         const data = XLSX.utils.sheet_to_json<CellValue[]>(wb.Sheets[first], {
           header: 1,
@@ -102,7 +102,7 @@ const ExcelEditorModal: React.FC<ExcelEditorModalProps> = ({
         Sheets: { ...workbook.Sheets, [activeSheet]: XLSX.utils.aoa_to_sheet(sheetData) },
       };
       const ext = file.name.split('.').pop()?.toLowerCase();
-      const bookType: XLSX.BookType = ext === 'xls' ? 'xls' : ext === 'csv' ? 'csv' : 'xlsx';
+      const bookType: XLSX.BookType = ext === 'xls' ? 'xls' : 'xlsx';
       const wbout = XLSX.write(updatedWb, { bookType, type: 'array' });
       const blob = new Blob([wbout], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
