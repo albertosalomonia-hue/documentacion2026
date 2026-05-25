@@ -1,9 +1,10 @@
 import React from 'react';
-import { 
-  Folder, 
-  Users, 
-  BarChart2, 
-  Settings
+import {
+  Folder,
+  Users,
+  BarChart2,
+  Settings,
+  Briefcase
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -47,9 +48,16 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView = 'plans', onNavigate, us
           
           <NavItem icon={<BarChart2 size={18} />} label="Estadísticas" />
           
-          <NavItem 
-            icon={<Settings size={18} />} 
-            label="Configuración" 
+          <NavItem
+            icon={<Briefcase size={18} />}
+            label="Trabajos"
+            active={currentView === 'trabajos'}
+            onClick={() => handleNav('trabajos')}
+          />
+
+          <NavItem
+            icon={<Settings size={18} />}
+            label="Configuración"
             active={currentView === 'settings'}
             onClick={() => handleNav('settings')}
           />

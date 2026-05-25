@@ -5,6 +5,7 @@ import PlanCard, { AddPlanCard, PlanListItem } from './components/PlanCard';
 import LoginScreen from './components/LoginScreen';
 import FilePreviewModal from './components/FilePreviewModal';
 import ExcelEditorModal from './components/ExcelEditorModal';
+import WorkspacePanel, { WorkspaceItem } from './components/WorkspacePanel';
 import ForcePasswordChangeModal from './components/ForcePasswordChangeModal';
 import UserManagement from './components/UserManagement';
 import UserSettings from './components/UserSettings';
@@ -13,7 +14,7 @@ import { DropboxFile, PlanGroup, User, FileTag, PermissionType } from './types';
 import { DropboxService, getDropboxAuthUrl, parseAuthTokenFromUrl, parseAuthCodeFromUrl } from './services/dropboxService';
 import { MockAuthService } from './services/mockAuth';
 import { NotificationService } from './services/notificationService';
-import { UploadCloud, CheckCircle, AlertTriangle, RefreshCw, Trash2, Lock, ShieldAlert, FolderPlus, Home, ChevronRight, Tag, Plus, X, ArrowRight, FileText, Folder as FolderIcon, Loader2, Link2, Shield, Wrench, Edit2, Share2, ExternalLink, Pencil, Download } from 'lucide-react';
+import { UploadCloud, CheckCircle, AlertTriangle, RefreshCw, Trash2, Lock, ShieldAlert, FolderPlus, Home, ChevronRight, Tag, Plus, X, ArrowRight, FileText, Folder as FolderIcon, Loader2, Link2, Shield, Wrench, Edit2, Share2, ExternalLink, Pencil, Download, Briefcase } from 'lucide-react';
 
 const UPLOAD_CONCURRENCY = 6; // archivos subiendo en paralelo al mismo tiempo
 
@@ -121,6 +122,15 @@ const App: React.FC = () => {
       isLoadingFolders: boolean;
       search: string;
   }>({ isOpen: false, isMoving: false, selectedFolder: null, folders: [], isLoadingFolders: false, search: '' });
+
+  // --- Workspace (Trabajos) state ---
+  const [trabajosDirHandle, setTrabajosDirHandle] = useState<any>(null);
+  const [trabajosDirName, setTrabajosDirName] = useState<string | null>(() => localStorage.getItem('trabajos_dir_name'));
+  const [trabajosItems, setTrabajosItems] = useState<WorkspaceItem[]>(() => {
+      try { return JSON.parse(localStorage.getItem('trabajos_v1') || '[]'); } catch { return []; }
+  });
+  const [trabajosSyncStatuses, setTrabajosSyncStatuses] = useState<Record<string, 'idle'|'syncing'|'done'|'error'|'missing'>>({});
+  const [isTrabajosSyncing, setIsTrabajosSyncing] = useState(false);
 
   const [contextMenu, setContextMenu] = useState<{
       isOpen: boolean;
@@ -890,6 +900,119 @@ const App: React.FC = () => {
       }
   };
 
+  // --- Workspace (Trabajos) handlers ---
+
+  const handleConfigureTrabajosDir = async () => {
+      if (!('showDirectoryPicker' in window)) return;
+      try {
+          const handle = await (window as any).showDirectoryPicker({ mode: 'readwrite', startIn: 'documents' });
+          setTrabajosDirHandle(handle);
+          setTrabajosDirName(handle.name);
+          localStorage.setItem('trabajos_dir_name', handle.name);
+      } catch { /* user cancelled */ }
+  };
+
+  const handleDownloadToTrabajos = async (file: DropboxFile) => {
+      if (!token) return;
+      try {
+          const service = getDropboxService();
+          const url = await service.getTemporaryLink(file.path_lower);
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+
+          if (trabajosDirHandle) {
+              const fh = await trabajosDirHandle.getFileHandle(file.name, { create: true });
+              const writable = await fh.createWritable();
+              await writable.write(blob);
+              await writable.close();
+          } else {
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = file.name;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(a.href);
+          }
+
+          const newItem: WorkspaceItem = {
+              name: file.name,
+              dropboxPath: file.path_lower,
+              downloadedAt: new Date().toISOString(),
+              size: file.size || 0,
+          };
+          setTrabajosItems(prev => {
+              const updated = [...prev.filter(f => f.dropboxPath !== file.path_lower), newItem];
+              localStorage.setItem('trabajos_v1', JSON.stringify(updated));
+              return updated;
+          });
+          setTrabajosSyncStatuses(prev => ({ ...prev, [file.path_lower]: 'idle' }));
+          setCurrentView('trabajos');
+      } catch (err: any) {
+          alert(`Error al guardar en Trabajos: ${err.message}`);
+      }
+  };
+
+  const handleSincronizarAll = async () => {
+      if (!token || trabajosItems.length === 0) return;
+      if (!trabajosDirHandle) {
+          alert('Configura el directorio Trabajos primero para sincronizar automáticamente, o usa "Subir editado" por archivo.');
+          return;
+      }
+      setIsTrabajosSyncing(true);
+      const service = getDropboxService();
+      const newStatuses: Record<string, 'idle'|'syncing'|'done'|'error'|'missing'> = {};
+
+      for (const item of trabajosItems) {
+          newStatuses[item.dropboxPath] = 'syncing';
+          setTrabajosSyncStatuses({ ...newStatuses });
+          try {
+              const fh = await trabajosDirHandle.getFileHandle(item.name).catch(() => null);
+              if (!fh) {
+                  newStatuses[item.dropboxPath] = 'missing';
+              } else {
+                  const localFile = await fh.getFile();
+                  await service.uploadFile('', localFile, item.dropboxPath);
+                  newStatuses[item.dropboxPath] = 'done';
+              }
+          } catch {
+              newStatuses[item.dropboxPath] = 'error';
+          }
+          setTrabajosSyncStatuses({ ...newStatuses });
+      }
+
+      setIsTrabajosSyncing(false);
+      await refreshFiles();
+  };
+
+  const handleSincronizarItem = async (item: WorkspaceItem, file: File) => {
+      if (!token) return;
+      setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'syncing' }));
+      try {
+          const service = getDropboxService();
+          await service.uploadFile('', file, item.dropboxPath);
+          setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'done' }));
+          await refreshFiles();
+      } catch (err: any) {
+          setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'error' }));
+          alert(`Error al sincronizar "${item.name}": ${err.message}`);
+      }
+  };
+
+  const handleRemoveFromTrabajos = (dropboxPath: string) => {
+      setTrabajosItems(prev => {
+          const updated = prev.filter(f => f.dropboxPath !== dropboxPath);
+          localStorage.setItem('trabajos_v1', JSON.stringify(updated));
+          return updated;
+      });
+      setTrabajosSyncStatuses(prev => {
+          const next = { ...prev };
+          delete next[dropboxPath];
+          return next;
+      });
+  };
+
   const handleBulkMoveOpen = async () => {
       if (!token) return;
       setBulkMoveModal(prev => ({ ...prev, isOpen: true, isLoadingFolders: true, search: '', selectedFolder: null }));
@@ -1374,6 +1497,14 @@ const App: React.FC = () => {
                                   <span>Descargar</span>
                               </button>
                           )}
+                          {contextMenu.canDownload && (
+                              <button
+                                  className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-blue-50 flex items-center gap-2.5 transition-colors"
+                                  onClick={() => { handleDownloadToTrabajos(contextMenu.file!); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                                  <Briefcase size={14} className="text-blue-500 shrink-0" />
+                                  <span>Guardar en Trabajos</span>
+                              </button>
+                          )}
                       </div>
                       <div className="border-t border-gray-100" />
                   </>
@@ -1602,6 +1733,20 @@ const App: React.FC = () => {
         ) : currentView === 'settings' ? (
             <div className="flex-1 overflow-y-auto bg-gray-50">
                 <UserSettings currentUser={currentUser} onUpdateUser={handleUserUpdate} />
+            </div>
+        ) : currentView === 'trabajos' ? (
+            <div className="flex-1 overflow-y-auto bg-gray-50">
+                <WorkspacePanel
+                    items={trabajosItems}
+                    dirHandle={trabajosDirHandle}
+                    dirName={trabajosDirName}
+                    onConfigureDir={handleConfigureTrabajosDir}
+                    onSyncAll={handleSincronizarAll}
+                    onRemove={handleRemoveFromTrabajos}
+                    onFileSelected={handleSincronizarItem}
+                    isSyncing={isTrabajosSyncing}
+                    syncStatuses={trabajosSyncStatuses}
+                />
             </div>
         ) : (
             <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
