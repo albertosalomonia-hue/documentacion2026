@@ -15,6 +15,8 @@ import { MockAuthService } from './services/mockAuth';
 import { NotificationService } from './services/notificationService';
 import { UploadCloud, CheckCircle, AlertTriangle, RefreshCw, Trash2, Lock, ShieldAlert, FolderPlus, Home, ChevronRight, Tag, Plus, X, ArrowRight, FileText, Folder as FolderIcon, Loader2, Link2, Shield, Wrench, Edit2, Share2, ExternalLink, Pencil, Download } from 'lucide-react';
 
+const UPLOAD_CONCURRENCY = 10; // archivos subiendo en paralelo al mismo tiempo
+
 const PROVIDED_TOKEN = process.env.NEXT_PUBLIC_DROPBOX_ACCESS_TOKEN;
 const CONFIG_ROOT = process.env.NEXT_PUBLIC_DROPBOX_ROOT_PATH || '';
 
@@ -636,38 +638,52 @@ const App: React.FC = () => {
     }
 
     const service = getDropboxService();
-    let errorCount = 0;
     const uploadedPaths: string[] = [];
     const failed: File[] = [];
+    let completed = 0;
+    const queue = [...toUpload];
+    const user = currentUser?.username || 'unknown';
 
-    for (let i = 0; i < toUpload.length; i++) {
-        const { file, idx } = toUpload[i];
+    const uploadWorker = async () => {
+        while (true) {
+            const item = queue.shift();
+            if (!item) break;
+            const { file, idx } = item;
 
-        setUploadProgress(prev => {
-            const updated = [...prev.files];
-            updated[idx] = { ...updated[idx], status: 'uploading' };
-            return { ...prev, files: updated, current: i };
-        });
-
-        try {
-            const uploadedFile = await service.uploadFile(currentPath, file);
-            uploadedPaths.push(uploadedFile.path_lower);
-            await NotificationService.create('upload', `Subió archivo: ${file.name}`, currentUser?.username || 'unknown');
             setUploadProgress(prev => {
                 const updated = [...prev.files];
-                updated[idx] = { ...updated[idx], status: 'done' };
-                return { ...prev, files: updated, current: i + 1 };
+                updated[idx] = { ...updated[idx], status: 'uploading' };
+                return { ...prev, files: updated };
             });
-        } catch (err: any) {
-            console.error(err);
-            errorCount++;
-            failed.push(file);
-            setUploadProgress(prev => {
-                const updated = [...prev.files];
-                updated[idx] = { ...updated[idx], status: 'error' };
-                return { ...prev, files: updated, current: i + 1 };
-            });
+
+            try {
+                const uploaded = await service.uploadFile(currentPath, file);
+                uploadedPaths.push(uploaded.path_lower);
+                completed++;
+                setUploadProgress(prev => {
+                    const updated = [...prev.files];
+                    updated[idx] = { ...updated[idx], status: 'done' };
+                    return { ...prev, files: updated, current: completed };
+                });
+            } catch (err: any) {
+                console.error(err);
+                failed.push(file);
+                completed++;
+                setUploadProgress(prev => {
+                    const updated = [...prev.files];
+                    updated[idx] = { ...updated[idx], status: 'error' };
+                    return { ...prev, files: updated, current: completed };
+                });
+            }
         }
+    };
+
+    // Lanzar N workers en paralelo
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, toUpload.length) }, uploadWorker));
+
+    // Notificación única al final (no bloquea la subida)
+    if (uploadedPaths.length > 0) {
+        NotificationService.create('upload', `Subió ${uploadedPaths.length} archivo(s)`, user).catch(console.error);
     }
 
     if (currentUser && currentUser.role !== 'admin' && uploadedPaths.length > 0) {
@@ -680,10 +696,9 @@ const App: React.FC = () => {
     setFailedFileObjects(failed);
     await refreshFiles();
 
-    if (errorCount === 0) {
+    if (!failed.length) {
         setTimeout(() => setUploadProgress({ isOpen: false, folderName: '', files: [], current: 0, total: 0 }), 1500);
     }
-    // Si hay errores, el modal queda abierto para que el usuario use REENVIAR
   };
 
   const handleReenviar = async () => {
@@ -705,34 +720,45 @@ const App: React.FC = () => {
     const service = getDropboxService();
     const uploadedPaths: string[] = [];
     const failed: File[] = [];
+    let completed = 0;
+    const queue = [...retrying];
 
-    for (let i = 0; i < retrying.length; i++) {
-        const file = retrying[i];
+    const retryWorker = async () => {
+        while (true) {
+            const file = queue.shift();
+            if (!file) break;
 
-        setUploadProgress(prev => ({
-            ...prev,
-            files: prev.files.map(f => f.name === file.name ? { ...f, status: 'uploading' as const } : f),
-            current: i,
-        }));
-
-        try {
-            const uploadedFile = await service.uploadFile(currentPath, file);
-            uploadedPaths.push(uploadedFile.path_lower);
-            await NotificationService.create('upload', `Reenvió archivo: ${file.name}`, currentUser?.username || 'unknown');
             setUploadProgress(prev => ({
                 ...prev,
-                files: prev.files.map(f => f.name === file.name ? { ...f, status: 'done' as const } : f),
-                current: i + 1,
+                files: prev.files.map(f => f.name === file.name ? { ...f, status: 'uploading' as const } : f),
             }));
-        } catch (err: any) {
-            console.error(err);
-            failed.push(file);
-            setUploadProgress(prev => ({
-                ...prev,
-                files: prev.files.map(f => f.name === file.name ? { ...f, status: 'error' as const } : f),
-                current: i + 1,
-            }));
+
+            try {
+                const uploaded = await service.uploadFile(currentPath, file);
+                uploadedPaths.push(uploaded.path_lower);
+                completed++;
+                setUploadProgress(prev => ({
+                    ...prev,
+                    files: prev.files.map(f => f.name === file.name ? { ...f, status: 'done' as const } : f),
+                    current: completed,
+                }));
+            } catch (err: any) {
+                console.error(err);
+                failed.push(file);
+                completed++;
+                setUploadProgress(prev => ({
+                    ...prev,
+                    files: prev.files.map(f => f.name === file.name ? { ...f, status: 'error' as const } : f),
+                    current: completed,
+                }));
+            }
         }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, retrying.length) }, retryWorker));
+
+    if (uploadedPaths.length > 0) {
+        NotificationService.create('upload', `Reenvió ${uploadedPaths.length} archivo(s)`, currentUser?.username || 'unknown').catch(console.error);
     }
 
     if (currentUser && currentUser.role !== 'admin' && uploadedPaths.length > 0) {
@@ -934,36 +960,45 @@ const App: React.FC = () => {
 
         const uploadedPaths: string[] = [];
         const failed: File[] = [];
+        let completed = 0;
+        const queue = [...toUpload];
 
-        for (let i = 0; i < toUpload.length; i++) {
-            const { file, idx } = toUpload[i];
-            const fullPath = (basePath === '' ? '' : basePath) + '/' + file.webkitRelativePath;
+        const folderWorker = async () => {
+            while (true) {
+                const item = queue.shift();
+                if (!item) break;
+                const { file, idx } = item;
+                const fullPath = (basePath === '' ? '' : basePath) + '/' + file.webkitRelativePath;
 
-            setUploadProgress(prev => {
-                const updated = [...prev.files];
-                updated[idx] = { ...updated[idx], status: 'uploading' };
-                return { ...prev, files: updated, current: i };
-            });
-
-            try {
-                const uploadedFile = await service.uploadFile(currentPath, file, fullPath);
-                uploadedPaths.push(uploadedFile.path_lower);
-                await NotificationService.create('upload', `Subió: ${file.name}`, currentUser?.username || 'unknown');
                 setUploadProgress(prev => {
                     const updated = [...prev.files];
-                    updated[idx] = { ...updated[idx], status: 'done' };
-                    return { ...prev, files: updated, current: i + 1 };
+                    updated[idx] = { ...updated[idx], status: 'uploading' };
+                    return { ...prev, files: updated };
                 });
-            } catch (err: any) {
-                console.error(`Error subiendo ${file.name}:`, err);
-                failed.push(file);
-                setUploadProgress(prev => {
-                    const updated = [...prev.files];
-                    updated[idx] = { ...updated[idx], status: 'error' };
-                    return { ...prev, files: updated, current: i + 1 };
-                });
+
+                try {
+                    const uploadedFile = await service.uploadFile(currentPath, file, fullPath);
+                    uploadedPaths.push(uploadedFile.path_lower);
+                    completed++;
+                    setUploadProgress(prev => {
+                        const updated = [...prev.files];
+                        updated[idx] = { ...updated[idx], status: 'done' };
+                        return { ...prev, files: updated, current: completed };
+                    });
+                } catch (err: any) {
+                    console.error(`Error subiendo ${file.name}:`, err);
+                    failed.push(file);
+                    completed++;
+                    setUploadProgress(prev => {
+                        const updated = [...prev.files];
+                        updated[idx] = { ...updated[idx], status: 'error' };
+                        return { ...prev, files: updated, current: completed };
+                    });
+                }
             }
-        }
+        };
+
+        await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, toUpload.length) }, folderWorker));
 
         if (currentUser && currentUser.role !== 'admin' && uploadedPaths.length > 0) {
             try {
@@ -973,7 +1008,7 @@ const App: React.FC = () => {
         }
 
         if (uploadedPaths.length > 0) {
-            await NotificationService.create('upload', `Subió carpeta: ${folderName} (${uploadedPaths.length} archivos)`, currentUser?.username || 'unknown');
+            NotificationService.create('upload', `Subió carpeta: ${folderName} (${uploadedPaths.length} archivos)`, currentUser?.username || 'unknown').catch(console.error);
         }
 
         setFailedFileObjects(failed);
