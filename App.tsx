@@ -760,6 +760,8 @@ const App: React.FC = () => {
     const failed: File[] = [];
     let completed = 0;
     const queue = [...retrying];
+    // Fewer workers on retry to reduce pressure on Dropbox rate limits
+    const retryConcurrency = Math.min(3, retrying.length);
 
     const retryWorker = async () => {
         while (true) {
@@ -778,20 +780,40 @@ const App: React.FC = () => {
                 files: prev.files.map(f => f.name === progressName ? { ...f, status: 'uploading' as const } : f),
             }));
 
+            let uploadError: any = null;
+            let uploadedFile: any = null;
+
+            // First attempt
             try {
-                const uploaded = await service.uploadFile(currentPath, file, explicitPath);
-                uploadedPaths.push(uploaded.path_lower);
+                uploadedFile = await service.uploadFile(currentPath, file, explicitPath);
+            } catch (err) {
+                uploadError = err;
+            }
+
+            // Automatic second attempt after a pause (handles transient errors and rate limits)
+            if (uploadError) {
+                await new Promise(r => setTimeout(r, 3000));
+                try {
+                    uploadedFile = await service.uploadFile(currentPath, file, explicitPath);
+                    uploadError = null;
+                } catch (err) {
+                    uploadError = err;
+                }
+            }
+
+            if (!uploadError && uploadedFile) {
+                uploadedPaths.push(uploadedFile.path_lower);
                 completed++;
                 setUploadProgress(prev => ({
                     ...prev,
                     files: prev.files.map(f => f.name === progressName ? { ...f, status: 'done' as const } : f),
                     current: completed,
                 }));
-            } catch (err: any) {
-                console.error(err);
+            } else {
+                console.error(uploadError);
                 failed.push(file);
                 completed++;
-                const errorMsg = parseUploadError(err);
+                const errorMsg = parseUploadError(uploadError);
                 setUploadProgress(prev => ({
                     ...prev,
                     files: prev.files.map(f => f.name === progressName ? { ...f, status: 'error' as const, errorMsg } : f),
@@ -801,7 +823,7 @@ const App: React.FC = () => {
         }
     };
 
-    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, retrying.length) }, retryWorker));
+    await Promise.all(Array.from({ length: retryConcurrency }, retryWorker));
 
     if (uploadedPaths.length > 0) {
         NotificationService.create('upload', `Reenvió ${uploadedPaths.length} archivo(s)`, currentUser?.username || 'unknown').catch(console.error);
