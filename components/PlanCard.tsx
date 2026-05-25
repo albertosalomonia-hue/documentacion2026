@@ -21,6 +21,8 @@ interface PlanCardProps {
   draggedFile?: DropboxFile | null;
   sharedWithCount?: number;
   effectivePermissions?: PermissionType[];
+  selected?: boolean;
+  onSelect?: (file: DropboxFile, e: React.MouseEvent) => void;
 }
 
 const getFileIcon = (fileName: string) => {
@@ -46,7 +48,9 @@ const PlanCard: React.FC<PlanCardProps> = ({
     allTags = [],
     draggedFile,
     sharedWithCount = 0,
-    effectivePermissions = []
+    effectivePermissions = [],
+    selected = false,
+    onSelect,
 }) => {
   const isFolder = file['.tag'] === 'folder';
   const isOfficeFile = file.name.match(/\.(xlsx|xls|docx|doc|pptx)$/i);
@@ -127,9 +131,10 @@ const PlanCard: React.FC<PlanCardProps> = ({
         onDrop={handleDrop}
         onClick={() => onClick(file)}
         onContextMenu={handleContextMenu}
-        className={`group relative bg-white border rounded shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col h-40 active:opacity-50 
+        className={`group relative bg-white border rounded shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col h-40 active:opacity-50
             ${isFolder ? 'border-yellow-200 bg-yellow-50/30' : 'border-gray-200'}
             ${isDragOver ? 'ring-4 ring-blue-400 scale-105 z-10 bg-blue-50' : ''}
+            ${selected ? 'ring-2 ring-blue-500 border-blue-400' : ''}
         `}
     >
         <div className={`flex-1 relative overflow-hidden p-2 flex items-center justify-center ${isDragOver ? 'bg-blue-100' : (isFolder ? 'bg-yellow-50' : 'bg-gray-50')}`}>
@@ -160,6 +165,21 @@ const PlanCard: React.FC<PlanCardProps> = ({
                         </svg>
                     </div>
                  </>
+             )}
+
+             {/* CHECKBOX OVERLAY (loose files only) */}
+             {onSelect && !isFolder && (
+                 <div
+                     className="absolute top-2 right-2 z-30"
+                     onClick={(e) => { e.stopPropagation(); onSelect(file, e); }}
+                 >
+                     <input
+                         type="checkbox"
+                         checked={selected}
+                         onChange={() => {}}
+                         className="w-4 h-4 accent-blue-600 cursor-pointer"
+                     />
+                 </div>
              )}
 
              {/* TAGS OVERLAY */}
@@ -287,7 +307,9 @@ export const PlanListItem: React.FC<PlanCardProps> = ({
     allTags = [],
     draggedFile,
     sharedWithCount = 0,
-    effectivePermissions = []
+    effectivePermissions = [],
+    selected = false,
+    onSelect,
 }) => {
     const isFolder = file['.tag'] === 'folder';
     const isOfficeFile = file.name.match(/\.(xlsx|xls|docx|doc|pptx)$/i);
@@ -334,10 +356,24 @@ export const PlanListItem: React.FC<PlanCardProps> = ({
             onContextMenu={(e) => { e.preventDefault(); if (onContextMenuOpen) { onContextMenuOpen(file, e.clientX, e.clientY); } else if (onAssignTag) { onAssignTag(file); } }}
             className={`
                 border-b border-gray-100 cursor-pointer transition-colors
-                ${isDragOver ? 'bg-blue-50 border-blue-200' : 'hover:bg-gray-50 bg-white'}
+                ${isDragOver ? 'bg-blue-50 border-blue-200' : selected ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-gray-50 bg-white'}
                 ${isFolder ? 'font-medium' : ''}
             `}
         >
+            <td className="px-3 py-4 whitespace-nowrap w-10">
+                {onSelect && !isFolder && (
+                    <div
+                        onClick={(e) => { e.stopPropagation(); onSelect(file, e); }}
+                    >
+                        <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => {}}
+                            className="w-4 h-4 accent-blue-600 cursor-pointer"
+                        />
+                    </div>
+                )}
+            </td>
             <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex items-center">
                     <div className="flex-shrink-0 h-8 w-8 flex items-center justify-center mr-3 relative">

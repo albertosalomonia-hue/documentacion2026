@@ -111,6 +111,7 @@ const App: React.FC = () => {
   }>({ isOpen: false, folderName: '', files: [], current: 0, total: 0 });
 
   const [failedFileObjects, setFailedFileObjects] = useState<File[]>([]);
+  const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(new Set());
 
   const [contextMenu, setContextMenu] = useState<{
       isOpen: boolean;
@@ -538,6 +539,7 @@ const App: React.FC = () => {
           alert("Acceso denegado: Esta carpeta del sistema está restringida.");
           return;
       }
+      setSelectedFilePaths(new Set());
       setCurrentPath(path);
   };
 
@@ -827,6 +829,26 @@ const App: React.FC = () => {
     } finally {
         setIsLoading(false);
     }
+  };
+
+  const handleBulkDelete = async () => {
+      if (selectedFilePaths.size === 0) return;
+      const count = selectedFilePaths.size;
+      if (!confirm(`¿Eliminar ${count} archivo(s) seleccionado(s)? Esta acción no se puede deshacer.`)) return;
+      if (!token) return;
+      try {
+          setIsLoading(true);
+          const service = getDropboxService();
+          const paths = Array.from(selectedFilePaths);
+          await Promise.all(paths.map(p => service.deleteFile(p)));
+          await NotificationService.create('delete', `Eliminó ${count} archivos en masa`, currentUser?.username || 'unknown');
+          setSelectedFilePaths(new Set());
+          await refreshFiles();
+      } catch (err: any) {
+          alert(`Error al eliminar: ${err.message}`);
+      } finally {
+          setIsLoading(false);
+      }
   };
 
   const handleMoveFileRequest = (sourceFile: DropboxFile, targetFolder: DropboxFile) => {
@@ -1513,6 +1535,15 @@ const App: React.FC = () => {
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
+                                        <input
+                                            type="checkbox"
+                                            checked={regularFiles.length > 0 && regularFiles.every(f => selectedFilePaths.has(f.path_lower))}
+                                            onChange={(e) => setSelectedFilePaths(e.target.checked ? new Set(regularFiles.map(f => f.path_lower)) : new Set())}
+                                            className="w-4 h-4 accent-blue-600 cursor-pointer"
+                                            title="Seleccionar todos los archivos"
+                                        />
+                                    </th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tamaño</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Modificado</th>
@@ -1529,8 +1560,8 @@ const App: React.FC = () => {
                                 })}
                                 {regularFiles.map(file => {
                                     const perms = getEffectivePermissions(file, currentUser);
-                                    const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanListItem key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} />;
+                                    const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write'));
+                                    return <PlanListItem key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} selected={selectedFilePaths.has(file.path_lower)} onSelect={(f, e) => { e.stopPropagation(); setSelectedFilePaths(prev => { const next = new Set(prev); next.has(f.path_lower) ? next.delete(f.path_lower) : next.add(f.path_lower); return next; }); }} />;
                                 })}
                             </tbody>
                         </table>
@@ -1550,12 +1581,25 @@ const App: React.FC = () => {
                         </div>
                     )}
                     <div>
-                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Archivos ({regularFiles.length})</h3>
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Archivos ({regularFiles.length})</h3>
+                            {regularFiles.length > 0 && (
+                                <button
+                                    onClick={() => {
+                                        const allSelected = regularFiles.every(f => selectedFilePaths.has(f.path_lower));
+                                        setSelectedFilePaths(allSelected ? new Set() : new Set(regularFiles.map(f => f.path_lower)));
+                                    }}
+                                    className="text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline"
+                                >
+                                    {regularFiles.length > 0 && regularFiles.every(f => selectedFilePaths.has(f.path_lower)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
+                                </button>
+                            )}
+                        </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                             {regularFiles.map((file) => {
                                 const perms = getEffectivePermissions(file, currentUser);
-                                const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && (perms.includes('write') || perms.includes('read'))); 
-                                return <PlanCard key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} />;
+                                const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && (perms.includes('write') || perms.includes('read')));
+                                return <PlanCard key={file.id} file={file} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDelete={handleDelete} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} canDelete={perms.includes('delete')} effectivePermissions={perms} allTags={availableTags} sharedWithCount={0} selected={selectedFilePaths.has(file.path_lower)} onSelect={(f, e) => { e.stopPropagation(); setSelectedFilePaths(prev => { const next = new Set(prev); next.has(f.path_lower) ? next.delete(f.path_lower) : next.add(f.path_lower); return next; }); }} />;
                             })}
                             <AddPlanCard onClick={handleManualUploadClick} />
                         </div>
@@ -1585,6 +1629,25 @@ const App: React.FC = () => {
                             <p>El sistema requiere que el administrador principal conecte el repositorio.</p>
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* Floating bulk-delete action bar */}
+            {selectedFilePaths.size > 0 && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white shadow-xl border border-gray-200 rounded-full px-5 py-3 z-40">
+                    <span className="text-sm text-gray-700 font-medium">{selectedFilePaths.size} archivo{selectedFilePaths.size > 1 ? 's' : ''} seleccionado{selectedFilePaths.size > 1 ? 's' : ''}</span>
+                    <button
+                        onClick={handleBulkDelete}
+                        className="flex items-center gap-1.5 text-sm text-white bg-red-600 hover:bg-red-700 px-4 py-1.5 rounded-full transition-colors"
+                    >
+                        <Trash2 size={14} /> Eliminar
+                    </button>
+                    <button
+                        onClick={() => setSelectedFilePaths(new Set())}
+                        className="text-sm text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-full hover:bg-gray-100 transition-colors"
+                    >
+                        Cancelar
+                    </button>
                 </div>
             )}
 
