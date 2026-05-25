@@ -113,6 +113,15 @@ const App: React.FC = () => {
   const [failedFileObjects, setFailedFileObjects] = useState<File[]>([]);
   const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(new Set());
 
+  const [bulkMoveModal, setBulkMoveModal] = useState<{
+      isOpen: boolean;
+      isMoving: boolean;
+      selectedFolder: DropboxFile | null;
+      folders: DropboxFile[];
+      isLoadingFolders: boolean;
+      search: string;
+  }>({ isOpen: false, isMoving: false, selectedFolder: null, folders: [], isLoadingFolders: false, search: '' });
+
   const [contextMenu, setContextMenu] = useState<{
       isOpen: boolean;
       x: number;
@@ -851,6 +860,43 @@ const App: React.FC = () => {
       }
   };
 
+  const handleBulkMoveOpen = async () => {
+      if (!token) return;
+      setBulkMoveModal(prev => ({ ...prev, isOpen: true, isLoadingFolders: true, search: '', selectedFolder: null }));
+      try {
+          const service = getDropboxService();
+          const folders = await service.listAllFolders();
+          setBulkMoveModal(prev => ({ ...prev, folders, isLoadingFolders: false }));
+      } catch (err: any) {
+          alert(`Error al cargar carpetas: ${err.message}`);
+          setBulkMoveModal({ isOpen: false, isMoving: false, selectedFolder: null, folders: [], isLoadingFolders: false, search: '' });
+      }
+  };
+
+  const handleBulkMove = async () => {
+      const { selectedFolder } = bulkMoveModal;
+      if (!selectedFolder || selectedFilePaths.size === 0) return;
+      const count = selectedFilePaths.size;
+      const targetBase = selectedFolder.path_lower || '';
+      setBulkMoveModal(prev => ({ ...prev, isMoving: true }));
+      try {
+          const service = getDropboxService();
+          const paths = Array.from(selectedFilePaths) as string[];
+          await Promise.all(paths.map(async (srcPath) => {
+              const fileName = (srcPath as string).split('/').pop()!;
+              const destPath = targetBase === '' ? `/${fileName}` : `${targetBase}/${fileName}`;
+              await service.moveFile(srcPath, destPath);
+          }));
+          await NotificationService.create('upload', `Movió ${count} archivos a "${selectedFolder.name}"`, currentUser?.username || 'unknown');
+          setSelectedFilePaths(new Set());
+          setBulkMoveModal({ isOpen: false, isMoving: false, selectedFolder: null, folders: [], isLoadingFolders: false, search: '' });
+          await refreshFiles();
+      } catch (err: any) {
+          alert(`Error al mover: ${err.message}`);
+          setBulkMoveModal(prev => ({ ...prev, isMoving: false }));
+      }
+  };
+
   const handleMoveFileRequest = (sourceFile: DropboxFile, targetFolder: DropboxFile) => {
       console.log('[Move] Requested:', sourceFile.name, '→', targetFolder.name);
       setMoveModal({ isOpen: true, source: sourceFile, target: targetFolder, isMoving: false });
@@ -1119,6 +1165,98 @@ const App: React.FC = () => {
           onSave={handleExcelSave}
           canEdit={currentUser ? getEffectivePermissions(excelEditFile, currentUser).includes('write') : false}
         />
+      )}
+
+      {/* Bulk Move Modal */}
+      {bulkMoveModal.isOpen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 flex flex-col" style={{ maxHeight: '85vh' }}>
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
+                      <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                              <ArrowRight className="text-blue-600" size={18} />
+                          </div>
+                          <div>
+                              <h3 className="text-base font-bold text-gray-900">Mover archivos</h3>
+                              <p className="text-xs text-gray-500">{selectedFilePaths.size} archivo{selectedFilePaths.size > 1 ? 's' : ''} seleccionado{selectedFilePaths.size > 1 ? 's' : ''}</p>
+                          </div>
+                      </div>
+                      <button onClick={() => setBulkMoveModal(prev => ({ ...prev, isOpen: false }))} className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100">
+                          <X size={18} />
+                      </button>
+                  </div>
+
+                  {/* Search */}
+                  <div className="px-6 py-3 border-b border-gray-100 flex-shrink-0">
+                      <input
+                          type="text"
+                          placeholder="Buscar carpeta..."
+                          value={bulkMoveModal.search}
+                          onChange={e => setBulkMoveModal(prev => ({ ...prev, search: e.target.value }))}
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      />
+                  </div>
+
+                  {/* Folder list */}
+                  <div className="flex-1 overflow-y-auto px-3 py-2">
+                      {bulkMoveModal.isLoadingFolders ? (
+                          <div className="flex flex-col items-center justify-center h-32 gap-2 text-gray-400">
+                              <Loader2 className="animate-spin" size={24} />
+                              <span className="text-sm">Cargando carpetas…</span>
+                          </div>
+                      ) : (
+                          <>
+                              {/* Root option */}
+                              {(bulkMoveModal.search === '' || '/'.includes(bulkMoveModal.search.toLowerCase())) && (
+                                  <button
+                                      onClick={() => setBulkMoveModal(prev => ({ ...prev, selectedFolder: { id: 'root', name: '/ (Raíz)', path_lower: '', path_display: '/', '.tag': 'folder' } }))}
+                                      className={`w-full flex items-center gap-2 text-sm px-3 py-2 rounded-lg mb-1 text-left transition-colors ${bulkMoveModal.selectedFolder?.id === 'root' ? 'bg-blue-100 text-blue-800 font-medium' : 'hover:bg-gray-100 text-gray-700'}`}
+                                  >
+                                      <FolderIcon size={16} className="text-yellow-500 flex-shrink-0" />
+                                      / (Raíz)
+                                  </button>
+                              )}
+                              {bulkMoveModal.folders
+                                  .filter(f => bulkMoveModal.search === '' || (f.path_display || f.name).toLowerCase().includes(bulkMoveModal.search.toLowerCase()))
+                                  .map(folder => (
+                                      <button
+                                          key={folder.id}
+                                          onClick={() => setBulkMoveModal(prev => ({ ...prev, selectedFolder: folder }))}
+                                          className={`w-full flex items-center gap-2 text-sm px-3 py-2 rounded-lg mb-0.5 text-left transition-colors ${bulkMoveModal.selectedFolder?.id === folder.id ? 'bg-blue-100 text-blue-800 font-medium' : 'hover:bg-gray-100 text-gray-700'}`}
+                                      >
+                                          <FolderIcon size={16} className="text-yellow-500 flex-shrink-0" />
+                                          <span className="truncate" title={folder.path_display || folder.name}>{folder.path_display || folder.name}</span>
+                                      </button>
+                                  ))
+                              }
+                              {!bulkMoveModal.isLoadingFolders && bulkMoveModal.folders.filter(f => bulkMoveModal.search === '' || (f.path_display || f.name).toLowerCase().includes(bulkMoveModal.search.toLowerCase())).length === 0 && bulkMoveModal.search !== '' && (
+                                  <p className="text-sm text-gray-400 text-center py-6">No se encontraron carpetas</p>
+                              )}
+                          </>
+                      )}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="flex gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0">
+                      <button
+                          onClick={() => setBulkMoveModal({ isOpen: false, isMoving: false, selectedFolder: null, folders: [], isLoadingFolders: false, search: '' })}
+                          disabled={bulkMoveModal.isMoving}
+                          className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button
+                          onClick={handleBulkMove}
+                          disabled={!bulkMoveModal.selectedFolder || bulkMoveModal.isMoving}
+                          className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                      >
+                          {bulkMoveModal.isMoving && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                          {bulkMoveModal.isMoving ? 'Moviendo…' : 'Mover aquí'}
+                      </button>
+                  </div>
+              </div>
+          </div>
       )}
 
       {/* Move Confirmation Modal */}
@@ -1632,10 +1770,16 @@ const App: React.FC = () => {
                 </div>
             )}
 
-            {/* Floating bulk-delete action bar */}
+            {/* Floating bulk-action bar */}
             {selectedFilePaths.size > 0 && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white shadow-xl border border-gray-200 rounded-full px-5 py-3 z-40">
                     <span className="text-sm text-gray-700 font-medium">{selectedFilePaths.size} archivo{selectedFilePaths.size > 1 ? 's' : ''} seleccionado{selectedFilePaths.size > 1 ? 's' : ''}</span>
+                    <button
+                        onClick={handleBulkMoveOpen}
+                        className="flex items-center gap-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 px-4 py-1.5 rounded-full transition-colors"
+                    >
+                        <ArrowRight size={14} /> Mover
+                    </button>
                     <button
                         onClick={handleBulkDelete}
                         className="flex items-center gap-1.5 text-sm text-white bg-red-600 hover:bg-red-700 px-4 py-1.5 rounded-full transition-colors"
