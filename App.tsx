@@ -15,7 +15,32 @@ import { MockAuthService } from './services/mockAuth';
 import { NotificationService } from './services/notificationService';
 import { UploadCloud, CheckCircle, AlertTriangle, RefreshCw, Trash2, Lock, ShieldAlert, FolderPlus, Home, ChevronRight, Tag, Plus, X, ArrowRight, FileText, Folder as FolderIcon, Loader2, Link2, Shield, Wrench, Edit2, Share2, ExternalLink, Pencil, Download } from 'lucide-react';
 
-const UPLOAD_CONCURRENCY = 10; // archivos subiendo en paralelo al mismo tiempo
+const UPLOAD_CONCURRENCY = 6; // archivos subiendo en paralelo al mismo tiempo
+
+function parseUploadError(err: any): string {
+  const raw: string = err?.message ?? String(err);
+  // Dropbox devuelve JSON dentro del mensaje, ej: "Upload failed: {\"error_summary\":\"too_many_requests/...\"}"
+  try {
+    const jsonStart = raw.indexOf('{');
+    if (jsonStart !== -1) {
+      const parsed = JSON.parse(raw.slice(jsonStart));
+      const summary: string = parsed?.error_summary ?? parsed?.error?.['.tag'] ?? '';
+      if (summary.startsWith('too_many_requests'))  return 'Demasiadas solicitudes (límite Dropbox)';
+      if (summary.startsWith('insufficient_space')) return 'Espacio insuficiente en Dropbox';
+      if (summary.startsWith('disallowed_name'))    return 'Nombre de archivo no permitido';
+      if (summary.startsWith('path/conflict'))      return 'Conflicto de ruta en Dropbox';
+      if (summary.startsWith('path/too_long'))      return 'Ruta demasiado larga';
+      if (summary.startsWith('path/malformed'))     return 'Nombre de archivo inválido';
+      if (summary)                                  return summary;
+    }
+  } catch { /* no es JSON */ }
+  if (/401/.test(raw))              return 'Token expirado — reconectar Dropbox';
+  if (/403/.test(raw))              return 'Sin permisos en Dropbox';
+  if (/429/.test(raw))              return 'Demasiadas solicitudes (límite Dropbox)';
+  if (/fetch|network/i.test(raw))   return 'Error de red — verificar conexión';
+  if (/timeout/i.test(raw))         return 'Tiempo de espera agotado';
+  return raw.length > 80 ? raw.slice(0, 80) + '…' : raw;
+}
 
 const PROVIDED_TOKEN = process.env.NEXT_PUBLIC_DROPBOX_ACCESS_TOKEN;
 const CONFIG_ROOT = process.env.NEXT_PUBLIC_DROPBOX_ROOT_PATH || '';
@@ -80,7 +105,7 @@ const App: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState<{
       isOpen: boolean;
       folderName: string;
-      files: { name: string; status: 'pending' | 'uploading' | 'done' | 'error' | 'skipped'; oldSize?: number; newSize?: number }[];
+      files: { name: string; status: 'pending' | 'uploading' | 'done' | 'error' | 'skipped'; oldSize?: number; newSize?: number; errorMsg?: string }[];
       current: number;
       total: number;
   }>({ isOpen: false, folderName: '', files: [], current: 0, total: 0 });
@@ -669,9 +694,10 @@ const App: React.FC = () => {
                 console.error(err);
                 failed.push(file);
                 completed++;
+                const errorMsg = parseUploadError(err);
                 setUploadProgress(prev => {
                     const updated = [...prev.files];
-                    updated[idx] = { ...updated[idx], status: 'error' };
+                    updated[idx] = { ...updated[idx], status: 'error', errorMsg };
                     return { ...prev, files: updated, current: completed };
                 });
             }
@@ -746,9 +772,10 @@ const App: React.FC = () => {
                 console.error(err);
                 failed.push(file);
                 completed++;
+                const errorMsg = parseUploadError(err);
                 setUploadProgress(prev => ({
                     ...prev,
-                    files: prev.files.map(f => f.name === file.name ? { ...f, status: 'error' as const } : f),
+                    files: prev.files.map(f => f.name === file.name ? { ...f, status: 'error' as const, errorMsg } : f),
                     current: completed,
                 }));
             }
@@ -989,9 +1016,10 @@ const App: React.FC = () => {
                     console.error(`Error subiendo ${file.name}:`, err);
                     failed.push(file);
                     completed++;
+                    const errorMsg = parseUploadError(err);
                     setUploadProgress(prev => {
                         const updated = [...prev.files];
-                        updated[idx] = { ...updated[idx], status: 'error' };
+                        updated[idx] = { ...updated[idx], status: 'error', errorMsg };
                         return { ...prev, files: updated, current: completed };
                     });
                 }
@@ -1311,9 +1339,14 @@ const App: React.FC = () => {
                                       }`}>
                                           {f.name}
                                       </span>
+                                      {f.status === 'error' && f.errorMsg && (
+                                          <span className="flex-shrink-0 text-xs text-red-500 italic max-w-[180px] truncate" title={f.errorMsg}>
+                                              {f.errorMsg}
+                                          </span>
+                                      )}
                                       {f.status === 'skipped' ? (
                                           <span className="flex-shrink-0 text-xs text-gray-400 italic">ya existe</span>
-                                      ) : f.newSize !== undefined && (
+                                      ) : f.status !== 'error' && f.newSize !== undefined && (
                                           <span className="flex-shrink-0 text-xs font-mono text-gray-400">
                                               {fmtKB(f.newSize)}
                                           </span>
