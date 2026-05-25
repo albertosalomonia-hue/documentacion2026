@@ -179,7 +179,7 @@ export class DropboxService {
     }
   }
 
-  async listFiles(path: string = ''): Promise<DropboxFile[]> {
+  async listFiles(path: string = '', recursive: boolean = false): Promise<DropboxFile[]> {
     try {
       let allEntries: DropboxFile[] = [];
       let hasMore = true;
@@ -189,7 +189,7 @@ export class DropboxService {
           const endpoint = cursor ? '/files/list_folder/continue' : '/files/list_folder';
           const body = cursor ? { cursor } : {
             path: path === '/' ? '' : path,
-            recursive: false,
+            recursive: recursive,
             include_media_info: true,
             include_deleted: false,
             include_has_explicit_shared_members: false,

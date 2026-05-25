@@ -77,10 +77,11 @@ const App: React.FC = () => {
 
   const [uploadProgress, setUploadProgress] = useState<{
       isOpen: boolean;
+      folderName: string;
       files: { name: string; status: 'pending' | 'uploading' | 'done' | 'error' | 'skipped'; oldSize?: number; newSize?: number }[];
       current: number;
       total: number;
-  }>({ isOpen: false, files: [], current: 0, total: 0 });
+  }>({ isOpen: false, folderName: '', files: [], current: 0, total: 0 });
 
   const [failedFileObjects, setFailedFileObjects] = useState<File[]>([]);
 
@@ -610,6 +611,10 @@ const App: React.FC = () => {
     }
 
     const fileArray = Array.from(uploadFiles);
+    const folderName = (() => {
+        const rel = (fileArray[0] as any)?.webkitRelativePath as string | undefined;
+        return rel ? rel.split('/')[0] : '';
+    })();
 
     // Classify: files that already exist in Dropbox are skipped
     const toUpload: { file: File; idx: number }[] = [];
@@ -622,12 +627,12 @@ const App: React.FC = () => {
         return { name: f.name, status: 'pending' as const, oldSize: undefined, newSize: f.size };
     });
 
-    setUploadProgress({ isOpen: true, files: fileEntries, current: 0, total: toUpload.length });
+    setUploadProgress({ isOpen: true, folderName, files: fileEntries, current: 0, total: toUpload.length });
     setFailedFileObjects([]);
 
     if (toUpload.length === 0) {
         await refreshFiles();
-        return;
+        return; // modal stays open — allFinished = true → shows Cerrar
     }
 
     const service = getDropboxService();
@@ -676,7 +681,7 @@ const App: React.FC = () => {
     await refreshFiles();
 
     if (errorCount === 0) {
-        setTimeout(() => setUploadProgress({ isOpen: false, files: [], current: 0, total: 0 }), 1500);
+        setTimeout(() => setUploadProgress({ isOpen: false, folderName: '', files: [], current: 0, total: 0 }), 1500);
     }
     // Si hay errores, el modal queda abierto para que el usuario use REENVIAR
   };
@@ -741,7 +746,7 @@ const App: React.FC = () => {
     await refreshFiles();
 
     if (!failed.length) {
-        setTimeout(() => setUploadProgress({ isOpen: false, files: [], current: 0, total: 0 }), 1500);
+        setTimeout(() => setUploadProgress({ isOpen: false, folderName: '', files: [], current: 0, total: 0 }), 1500);
     }
   };
 
@@ -875,8 +880,6 @@ const App: React.FC = () => {
 
   const handleFolderUploadClick = async () => {
     if (!token) return;
-
-    // Validate if user can upload to current path
     if (!canCreateFolderInPath(currentPath, currentUser)) {
         alert("No tienes permisos para subir archivos a esta carpeta.");
         return;
@@ -884,85 +887,101 @@ const App: React.FC = () => {
 
     const input = document.createElement('input');
     input.type = 'file';
-    input.setAttribute('webkitdirectory', ''); input.setAttribute('directory', ''); input.setAttribute('multiple', '');
+    input.setAttribute('webkitdirectory', '');
+    input.setAttribute('directory', '');
+    input.setAttribute('multiple', '');
+
     input.onchange = async (e: any) => {
         if (!e.target.files.length) return;
 
-        const files = Array.from(e.target.files) as File[];
-        const fileCount = files.length;
-        const folderName = files[0].webkitRelativePath?.split('/')[0] || 'carpeta';
+        const selectedFiles = Array.from(e.target.files) as File[];
+        const folderName = selectedFiles[0]?.webkitRelativePath?.split('/')[0] || 'carpeta';
+        const basePath = currentPath.replace(/\/+$/, '');
+        const service = getDropboxService();
 
-        if (!confirm(`Se subirán ${fileCount} archivos desde "${folderName}". ¿Continuar?`)) {
+        // — Fetch existing Dropbox files recursively to detect duplicates —
+        let existingPaths = new Set<string>();
+        try {
+            const existing = await service.listFiles(currentPath, true);
+            existing.forEach(ef => { if (ef['.tag'] !== 'folder') existingPaths.add(ef.path_lower); });
+        } catch { /* on error, proceed without skip detection */ }
+
+        // Classify each file
+        const toUpload: { file: File; idx: number }[] = [];
+        const fileEntries = selectedFiles.map((f, idx) => {
+            const expectedPath = ((basePath === '' ? '' : basePath) + '/' + f.webkitRelativePath).toLowerCase();
+            if (existingPaths.has(expectedPath)) {
+                return { name: f.webkitRelativePath || f.name, status: 'skipped' as const, newSize: f.size };
+            }
+            toUpload.push({ file: f, idx });
+            return { name: f.webkitRelativePath || f.name, status: 'pending' as const, newSize: f.size };
+        });
+
+        const skippedCount = fileEntries.filter(f => f.status === 'skipped').length;
+        const msg = skippedCount > 0
+            ? `📁 "${folderName}": ${selectedFiles.length} archivos\n✅ ${skippedCount} ya subidos (se omitirán)\n📤 ${toUpload.length} por subir\n\n¿Continuar?`
+            : `📁 "${folderName}": ${selectedFiles.length} archivos por subir\n\n¿Continuar?`;
+
+        if (!confirm(msg)) return;
+
+        setUploadProgress({ isOpen: true, folderName, files: fileEntries, current: 0, total: toUpload.length });
+        setFailedFileObjects([]);
+
+        if (toUpload.length === 0) {
+            await refreshFiles();
             return;
         }
 
-        // Initialize progress state
-        const fileEntries = files.map(f => ({ name: f.webkitRelativePath || f.name, status: 'pending' as const }));
-        setUploadProgress({ isOpen: true, files: fileEntries, current: 0, total: fileCount });
-
-        const service = getDropboxService();
-        let successCount = 0;
-        let errorCount = 0;
         const uploadedPaths: string[] = [];
+        const failed: File[] = [];
 
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            if (file.webkitRelativePath) {
-                const basePath = currentPath.replace(/\/+$/, '');
-                const fullPath = (basePath === '' ? '' : basePath) + '/' + file.webkitRelativePath;
+        for (let i = 0; i < toUpload.length; i++) {
+            const { file, idx } = toUpload[i];
+            const fullPath = (basePath === '' ? '' : basePath) + '/' + file.webkitRelativePath;
 
-                // Mark as uploading
+            setUploadProgress(prev => {
+                const updated = [...prev.files];
+                updated[idx] = { ...updated[idx], status: 'uploading' };
+                return { ...prev, files: updated, current: i };
+            });
+
+            try {
+                const uploadedFile = await service.uploadFile(currentPath, file, fullPath);
+                uploadedPaths.push(uploadedFile.path_lower);
+                await NotificationService.create('upload', `Subió: ${file.name}`, currentUser?.username || 'unknown');
                 setUploadProgress(prev => {
                     const updated = [...prev.files];
-                    updated[i] = { ...updated[i], status: 'uploading' };
-                    return { ...prev, files: updated, current: i };
+                    updated[idx] = { ...updated[idx], status: 'done' };
+                    return { ...prev, files: updated, current: i + 1 };
                 });
-
-                try {
-                    const uploadedFile = await service.uploadFile(currentPath, file, fullPath);
-                    uploadedPaths.push(uploadedFile.path_lower);
-                    successCount++;
-                    setUploadProgress(prev => {
-                        const updated = [...prev.files];
-                        updated[i] = { ...updated[i], status: 'done' };
-                        return { ...prev, files: updated, current: i + 1 };
-                    });
-                } catch (err: any) {
-                    console.error(`Error subiendo ${file.name}:`, err);
-                    errorCount++;
-                    setUploadProgress(prev => {
-                        const updated = [...prev.files];
-                        updated[i] = { ...updated[i], status: 'error' };
-                        return { ...prev, files: updated, current: i + 1 };
-                    });
-                }
+            } catch (err: any) {
+                console.error(`Error subiendo ${file.name}:`, err);
+                failed.push(file);
+                setUploadProgress(prev => {
+                    const updated = [...prev.files];
+                    updated[idx] = { ...updated[idx], status: 'error' };
+                    return { ...prev, files: updated, current: i + 1 };
+                });
             }
         }
 
-        // Grant delete permission on uploaded files for non-admin users
         if (currentUser && currentUser.role !== 'admin' && uploadedPaths.length > 0) {
             try {
                 const updatedUser = await MockAuthService.grantDeleteForUploadedFiles(currentUser.username, uploadedPaths);
                 setCurrentUser(updatedUser);
-            } catch (e) {
-                console.error('Error al registrar permisos de eliminación:', e);
-            }
+            } catch (e) { console.error('Error al registrar permisos:', e); }
         }
 
+        if (uploadedPaths.length > 0) {
+            await NotificationService.create('upload', `Subió carpeta: ${folderName} (${uploadedPaths.length} archivos)`, currentUser?.username || 'unknown');
+        }
+
+        setFailedFileObjects(failed);
         await refreshFiles();
 
-        // NOTIFY
-        if (successCount > 0) {
-            await NotificationService.create('upload', `Subió carpeta: ${folderName} (${successCount} archivos)`, currentUser?.username || 'unknown');
+        if (!failed.length) {
+            setTimeout(() => setUploadProgress({ isOpen: false, folderName: '', files: [], current: 0, total: 0 }), 1500);
         }
-
-        // Close progress after a brief delay so user can see results
-        setTimeout(() => {
-            setUploadProgress({ isOpen: false, files: [], current: 0, total: 0 });
-            if (errorCount > 0) {
-                alert(`Subida completada con errores: ${successCount} exitosos, ${errorCount} fallidos.`);
-            }
-        }, 1500);
     };
     input.click();
   };
@@ -1152,11 +1171,14 @@ const App: React.FC = () => {
 
       {/* Upload Progress Modal */}
       {uploadProgress.isOpen && (() => {
-          const isUploading = uploadProgress.files.some(f => f.status === 'uploading' || f.status === 'pending' && uploadProgress.current < uploadProgress.total);
-          const errorCount  = uploadProgress.files.filter(f => f.status === 'error').length;
-          const doneCount   = uploadProgress.files.filter(f => f.status === 'done').length;
-          const skippedCount= uploadProgress.files.filter(f => f.status === 'skipped').length;
-          const allFinished = !uploadProgress.files.some(f => f.status === 'uploading');
+          const totalFiles   = uploadProgress.files.length;
+          const skippedCount = uploadProgress.files.filter(f => f.status === 'skipped').length;
+          const doneCount    = uploadProgress.files.filter(f => f.status === 'done').length;
+          const errorCount   = uploadProgress.files.filter(f => f.status === 'error').length;
+          const pendingCount = uploadProgress.files.filter(f => f.status === 'pending').length;
+          const toUploadTotal = totalFiles - skippedCount;
+          const allFinished  = !uploadProgress.files.some(f => f.status === 'uploading' || f.status === 'pending');
+          const pct = toUploadTotal > 0 ? Math.round((doneCount + errorCount) / toUploadTotal * 100) : 100;
           const fmtKB = (b: number) => Math.abs(b) >= 1024 * 1024
               ? (b / (1024 * 1024)).toFixed(1) + ' MB'
               : (b / 1024).toFixed(1) + ' KB';
@@ -1165,46 +1187,56 @@ const App: React.FC = () => {
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
 
                   {/* Header */}
-                  <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                      <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                          <UploadCloud size={20} className="text-blue-600" />
-                          Subiendo Archivos
-                      </h3>
-                      <span className="text-sm font-medium text-gray-500">
-                          {uploadProgress.current} / {uploadProgress.total}
-                      </span>
+                  <div className="px-6 py-4 border-b border-gray-200">
+                      <div className="flex items-center justify-between mb-1">
+                          <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                              <UploadCloud size={18} className="text-blue-600" />
+                              {allFinished ? 'Subida completada' : 'Subiendo archivos…'}
+                          </h3>
+                          {uploadProgress.folderName && (
+                              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded font-medium truncate max-w-[180px]">
+                                  📁 {uploadProgress.folderName}
+                              </span>
+                          )}
+                      </div>
+                      {/* Metrics row */}
+                      <div className="grid grid-cols-4 gap-2 mt-3">
+                          <div className="bg-gray-50 rounded-lg p-2 text-center">
+                              <div className="text-lg font-bold text-gray-800">{totalFiles}</div>
+                              <div className="text-[10px] text-gray-500 leading-tight">Total<br/>seleccionados</div>
+                          </div>
+                          <div className="bg-blue-50 rounded-lg p-2 text-center">
+                              <div className="text-lg font-bold text-blue-700">{skippedCount}</div>
+                              <div className="text-[10px] text-blue-600 leading-tight">Ya estaban<br/>en Dropbox</div>
+                          </div>
+                          <div className="bg-green-50 rounded-lg p-2 text-center">
+                              <div className="text-lg font-bold text-green-700">{doneCount}</div>
+                              <div className="text-[10px] text-green-600 leading-tight">Subidos<br/>ahora</div>
+                          </div>
+                          <div className={`rounded-lg p-2 text-center ${errorCount > 0 ? 'bg-red-50' : pendingCount > 0 ? 'bg-orange-50' : 'bg-gray-50'}`}>
+                              <div className={`text-lg font-bold ${errorCount > 0 ? 'text-red-700' : pendingCount > 0 ? 'text-orange-600' : 'text-gray-400'}`}>
+                                  {errorCount > 0 ? errorCount : pendingCount}
+                              </div>
+                              <div className={`text-[10px] leading-tight ${errorCount > 0 ? 'text-red-500' : 'text-orange-500'}`}>
+                                  {errorCount > 0 ? 'Con\nerror' : 'Por\nsubir'}
+                              </div>
+                          </div>
+                      </div>
                   </div>
 
                   {/* Progress Bar */}
                   <div className="px-6 py-3">
-                      <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                          <span>{allFinished && errorCount === 0 ? '✓ Completado' : `${doneCount + errorCount} / ${toUploadTotal} archivos`}</span>
+                          <span className="font-medium">{pct}%</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                           <div
-                              className="h-full bg-blue-600 rounded-full transition-all duration-300"
-                              style={{ width: `${uploadProgress.total > 0 ? (uploadProgress.current / uploadProgress.total) * 100 : 0}%` }}
+                              className={`h-full rounded-full transition-all duration-300 ${errorCount > 0 && allFinished ? 'bg-orange-500' : 'bg-blue-600'}`}
+                              style={{ width: `${pct}%` }}
                           />
                       </div>
                   </div>
-
-                  {/* Summary chips */}
-                  {allFinished && (doneCount > 0 || errorCount > 0 || skippedCount > 0) && (
-                      <div className="px-6 pb-2 flex flex-wrap gap-2">
-                          {doneCount > 0 && (
-                              <span className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
-                                  <CheckCircle size={11} /> {doneCount} subido{doneCount !== 1 ? 's' : ''}
-                              </span>
-                          )}
-                          {skippedCount > 0 && (
-                              <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">
-                                  ⏭ {skippedCount} ya existía{skippedCount !== 1 ? 'n' : ''}
-                              </span>
-                          )}
-                          {errorCount > 0 && (
-                              <span className="flex items-center gap-1 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">
-                                  <AlertTriangle size={11} /> {errorCount} error{errorCount !== 1 ? 'es' : ''}
-                              </span>
-                          )}
-                      </div>
-                  )}
 
                   {/* File List */}
                   <div className="px-6 pb-2 max-h-64 overflow-y-auto">
@@ -1275,7 +1307,7 @@ const App: React.FC = () => {
                               </button>
                           )}
                           <button
-                              onClick={() => { setUploadProgress({ isOpen: false, files: [], current: 0, total: 0 }); setFailedFileObjects([]); }}
+                              onClick={() => { setUploadProgress({ isOpen: false, folderName: '', files: [], current: 0, total: 0 }); setFailedFileObjects([]); }}
                               className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border border-gray-200 hover:border-gray-300 rounded-lg transition-colors"
                           >
                               Cerrar
