@@ -742,12 +742,13 @@ const App: React.FC = () => {
     if (!failedFileObjects.length || !token) return;
 
     const retrying = [...failedFileObjects];
+    const basePath = currentPath.replace(/\/+$/, '');
 
-    // Reset failed → pending en el UI
+    // Reset failed → pending in the UI (also clear old error message)
     setUploadProgress(prev => ({
         ...prev,
         files: prev.files.map(f =>
-            f.status === 'error' ? { ...f, status: 'pending' as const } : f
+            f.status === 'error' ? { ...f, status: 'pending' as const, errorMsg: undefined } : f
         ),
         total: retrying.length,
         current: 0,
@@ -765,18 +766,25 @@ const App: React.FC = () => {
             const file = queue.shift();
             if (!file) break;
 
+            // For folder uploads: webkitRelativePath = "FolderName/sub/file.txt"
+            // For individual uploads: webkitRelativePath is "" or undefined
+            const progressName = file.webkitRelativePath || file.name;
+            const explicitPath = file.webkitRelativePath
+                ? (basePath === '' ? '' : basePath) + '/' + file.webkitRelativePath
+                : undefined;
+
             setUploadProgress(prev => ({
                 ...prev,
-                files: prev.files.map(f => f.name === file.name ? { ...f, status: 'uploading' as const } : f),
+                files: prev.files.map(f => f.name === progressName ? { ...f, status: 'uploading' as const } : f),
             }));
 
             try {
-                const uploaded = await service.uploadFile(currentPath, file);
+                const uploaded = await service.uploadFile(currentPath, file, explicitPath);
                 uploadedPaths.push(uploaded.path_lower);
                 completed++;
                 setUploadProgress(prev => ({
                     ...prev,
-                    files: prev.files.map(f => f.name === file.name ? { ...f, status: 'done' as const } : f),
+                    files: prev.files.map(f => f.name === progressName ? { ...f, status: 'done' as const } : f),
                     current: completed,
                 }));
             } catch (err: any) {
@@ -786,7 +794,7 @@ const App: React.FC = () => {
                 const errorMsg = parseUploadError(err);
                 setUploadProgress(prev => ({
                     ...prev,
-                    files: prev.files.map(f => f.name === file.name ? { ...f, status: 'error' as const, errorMsg } : f),
+                    files: prev.files.map(f => f.name === progressName ? { ...f, status: 'error' as const, errorMsg } : f),
                     current: completed,
                 }));
             }
@@ -1021,17 +1029,20 @@ const App: React.FC = () => {
         const service = getDropboxService();
 
         // — Fetch existing Dropbox files recursively to detect duplicates —
-        let existingPaths = new Set<string>();
+        // Map: path_lower → size (so we can skip only if size matches — avoids treating damaged/0-byte files as complete)
+        let existingFiles = new Map<string, number>();
         try {
             const existing = await service.listFiles(currentPath, true);
-            existing.forEach(ef => { if (ef['.tag'] !== 'folder') existingPaths.add(ef.path_lower); });
+            existing.forEach(ef => { if (ef['.tag'] !== 'folder') existingFiles.set(ef.path_lower, ef.size ?? -1); });
         } catch { /* on error, proceed without skip detection */ }
 
         // Classify each file
         const toUpload: { file: File; idx: number }[] = [];
         const fileEntries = selectedFiles.map((f, idx) => {
             const expectedPath = ((basePath === '' ? '' : basePath) + '/' + f.webkitRelativePath).toLowerCase();
-            if (existingPaths.has(expectedPath)) {
+            const remoteSize = existingFiles.get(expectedPath);
+            // Skip only when the file exists AND its remote size matches the local size (file is intact)
+            if (remoteSize !== undefined && remoteSize > 0 && remoteSize === f.size) {
                 return { name: f.webkitRelativePath || f.name, status: 'skipped' as const, newSize: f.size };
             }
             toUpload.push({ file: f, idx });
