@@ -77,10 +77,12 @@ const App: React.FC = () => {
 
   const [uploadProgress, setUploadProgress] = useState<{
       isOpen: boolean;
-      files: { name: string; status: 'pending' | 'uploading' | 'done' | 'error'; oldSize?: number; newSize?: number }[];
+      files: { name: string; status: 'pending' | 'uploading' | 'done' | 'error' | 'skipped'; oldSize?: number; newSize?: number }[];
       current: number;
       total: number;
   }>({ isOpen: false, files: [], current: 0, total: 0 });
+
+  const [failedFileObjects, setFailedFileObjects] = useState<File[]>([]);
 
   const [contextMenu, setContextMenu] = useState<{
       isOpen: boolean;
@@ -602,72 +604,145 @@ const App: React.FC = () => {
 
   const processFileUpload = async (uploadFiles: FileList | File[]) => {
     if (!token) { alert("Sin conexión a Dropbox."); return; }
-
     if (!canCreateFolderInPath(currentPath, currentUser!)) {
         alert("No tienes permisos para subir archivos a esta carpeta.");
         return;
     }
 
     const fileArray = Array.from(uploadFiles);
-    const fileEntries = fileArray.map(f => {
+
+    // Classify: files that already exist in Dropbox are skipped
+    const toUpload: { file: File; idx: number }[] = [];
+    const fileEntries = fileArray.map((f, idx) => {
         const existing = files.find(ef => ef['.tag'] !== 'folder' && ef.name.toLowerCase() === f.name.toLowerCase());
-        return { name: f.name, status: 'pending' as const, oldSize: existing?.size, newSize: f.size };
+        if (existing) {
+            return { name: f.name, status: 'skipped' as const, oldSize: existing.size, newSize: f.size };
+        }
+        toUpload.push({ file: f, idx });
+        return { name: f.name, status: 'pending' as const, oldSize: undefined, newSize: f.size };
     });
-    setUploadProgress({ isOpen: true, files: fileEntries, current: 0, total: fileArray.length });
+
+    setUploadProgress({ isOpen: true, files: fileEntries, current: 0, total: toUpload.length });
+    setFailedFileObjects([]);
+
+    if (toUpload.length === 0) {
+        await refreshFiles();
+        return;
+    }
 
     const service = getDropboxService();
-    let successCount = 0;
     let errorCount = 0;
     const uploadedPaths: string[] = [];
+    const failed: File[] = [];
 
-    for (let i = 0; i < fileArray.length; i++) {
-        const file = fileArray[i];
+    for (let i = 0; i < toUpload.length; i++) {
+        const { file, idx } = toUpload[i];
 
         setUploadProgress(prev => {
             const updated = [...prev.files];
-            updated[i] = { ...updated[i], status: 'uploading' };
+            updated[idx] = { ...updated[idx], status: 'uploading' };
             return { ...prev, files: updated, current: i };
         });
 
         try {
             const uploadedFile = await service.uploadFile(currentPath, file);
             uploadedPaths.push(uploadedFile.path_lower);
-            successCount++;
             await NotificationService.create('upload', `Subió archivo: ${file.name}`, currentUser?.username || 'unknown');
             setUploadProgress(prev => {
                 const updated = [...prev.files];
-                updated[i] = { ...updated[i], status: 'done' };
+                updated[idx] = { ...updated[idx], status: 'done' };
                 return { ...prev, files: updated, current: i + 1 };
             });
         } catch (err: any) {
             console.error(err);
             errorCount++;
+            failed.push(file);
             setUploadProgress(prev => {
                 const updated = [...prev.files];
-                updated[i] = { ...updated[i], status: 'error' };
+                updated[idx] = { ...updated[idx], status: 'error' };
                 return { ...prev, files: updated, current: i + 1 };
             });
         }
     }
 
-    // Grant delete permission on uploaded files for non-admin users
     if (currentUser && currentUser.role !== 'admin' && uploadedPaths.length > 0) {
         try {
             const updatedUser = await MockAuthService.grantDeleteForUploadedFiles(currentUser.username, uploadedPaths);
             setCurrentUser(updatedUser);
-        } catch (e) {
-            console.error('Error al registrar permisos de eliminación:', e);
+        } catch (e) { console.error('Error al registrar permisos:', e); }
+    }
+
+    setFailedFileObjects(failed);
+    await refreshFiles();
+
+    if (errorCount === 0) {
+        setTimeout(() => setUploadProgress({ isOpen: false, files: [], current: 0, total: 0 }), 1500);
+    }
+    // Si hay errores, el modal queda abierto para que el usuario use REENVIAR
+  };
+
+  const handleReenviar = async () => {
+    if (!failedFileObjects.length || !token) return;
+
+    const retrying = [...failedFileObjects];
+
+    // Reset failed → pending en el UI
+    setUploadProgress(prev => ({
+        ...prev,
+        files: prev.files.map(f =>
+            f.status === 'error' ? { ...f, status: 'pending' as const } : f
+        ),
+        total: retrying.length,
+        current: 0,
+    }));
+    setFailedFileObjects([]);
+
+    const service = getDropboxService();
+    const uploadedPaths: string[] = [];
+    const failed: File[] = [];
+
+    for (let i = 0; i < retrying.length; i++) {
+        const file = retrying[i];
+
+        setUploadProgress(prev => ({
+            ...prev,
+            files: prev.files.map(f => f.name === file.name ? { ...f, status: 'uploading' as const } : f),
+            current: i,
+        }));
+
+        try {
+            const uploadedFile = await service.uploadFile(currentPath, file);
+            uploadedPaths.push(uploadedFile.path_lower);
+            await NotificationService.create('upload', `Reenvió archivo: ${file.name}`, currentUser?.username || 'unknown');
+            setUploadProgress(prev => ({
+                ...prev,
+                files: prev.files.map(f => f.name === file.name ? { ...f, status: 'done' as const } : f),
+                current: i + 1,
+            }));
+        } catch (err: any) {
+            console.error(err);
+            failed.push(file);
+            setUploadProgress(prev => ({
+                ...prev,
+                files: prev.files.map(f => f.name === file.name ? { ...f, status: 'error' as const } : f),
+                current: i + 1,
+            }));
         }
     }
 
+    if (currentUser && currentUser.role !== 'admin' && uploadedPaths.length > 0) {
+        try {
+            const updatedUser = await MockAuthService.grantDeleteForUploadedFiles(currentUser.username, uploadedPaths);
+            setCurrentUser(updatedUser);
+        } catch (e) { console.error('Error al registrar permisos:', e); }
+    }
+
+    setFailedFileObjects(failed);
     await refreshFiles();
 
-    setTimeout(() => {
-        setUploadProgress({ isOpen: false, files: [], current: 0, total: 0 });
-        if (errorCount > 0) {
-            alert(`Subida completada con errores: ${successCount} exitosos, ${errorCount} fallidos.`);
-        }
-    }, 1500);
+    if (!failed.length) {
+        setTimeout(() => setUploadProgress({ isOpen: false, files: [], current: 0, total: 0 }), 1500);
+    }
   };
 
   const handleDelete = async (file: DropboxFile) => {
@@ -1076,12 +1151,23 @@ const App: React.FC = () => {
       )}
 
       {/* Upload Progress Modal */}
-      {uploadProgress.isOpen && (
+      {uploadProgress.isOpen && (() => {
+          const isUploading = uploadProgress.files.some(f => f.status === 'uploading' || f.status === 'pending' && uploadProgress.current < uploadProgress.total);
+          const errorCount  = uploadProgress.files.filter(f => f.status === 'error').length;
+          const doneCount   = uploadProgress.files.filter(f => f.status === 'done').length;
+          const skippedCount= uploadProgress.files.filter(f => f.status === 'skipped').length;
+          const allFinished = !uploadProgress.files.some(f => f.status === 'uploading');
+          const fmtKB = (b: number) => Math.abs(b) >= 1024 * 1024
+              ? (b / (1024 * 1024)).toFixed(1) + ' MB'
+              : (b / 1024).toFixed(1) + ' KB';
+          return (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+
+                  {/* Header */}
                   <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                      <h3 className="text-lg font-bold text-gray-900 flex items-center">
-                          <UploadCloud size={20} className="mr-2 text-blue-600" />
+                      <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                          <UploadCloud size={20} className="text-blue-600" />
                           Subiendo Archivos
                       </h3>
                       <span className="text-sm font-medium text-gray-500">
@@ -1099,16 +1185,35 @@ const App: React.FC = () => {
                       </div>
                   </div>
 
+                  {/* Summary chips */}
+                  {allFinished && (doneCount > 0 || errorCount > 0 || skippedCount > 0) && (
+                      <div className="px-6 pb-2 flex flex-wrap gap-2">
+                          {doneCount > 0 && (
+                              <span className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                                  <CheckCircle size={11} /> {doneCount} subido{doneCount !== 1 ? 's' : ''}
+                              </span>
+                          )}
+                          {skippedCount > 0 && (
+                              <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">
+                                  ⏭ {skippedCount} ya existía{skippedCount !== 1 ? 'n' : ''}
+                              </span>
+                          )}
+                          {errorCount > 0 && (
+                              <span className="flex items-center gap-1 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">
+                                  <AlertTriangle size={11} /> {errorCount} error{errorCount !== 1 ? 'es' : ''}
+                              </span>
+                          )}
+                      </div>
+                  )}
+
                   {/* File List */}
-                  <div className="px-6 pb-4 max-h-64 overflow-y-auto">
+                  <div className="px-6 pb-2 max-h-64 overflow-y-auto">
                       <ul className="space-y-1">
                           {uploadProgress.files.map((f, i) => {
-                              const diff = f.oldSize !== undefined && f.newSize !== undefined ? f.newSize - f.oldSize : null;
-                              const fmtKB = (b: number) => Math.abs(b) >= 1024 * 1024
-                                  ? (b / (1024 * 1024)).toFixed(1) + ' MB'
-                                  : (b / 1024).toFixed(1) + ' KB';
+                              const diff = f.status === 'skipped' && f.oldSize !== undefined && f.newSize !== undefined
+                                  ? f.newSize - f.oldSize : null;
                               return (
-                                  <li key={i} className="flex items-center text-sm py-1 px-2 rounded gap-2">
+                                  <li key={i} className={`flex items-center text-sm py-1 px-2 rounded gap-2 ${f.status === 'skipped' ? 'opacity-50' : ''}`}>
                                       <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
                                           {f.status === 'uploading' && (
                                               <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -1126,31 +1231,29 @@ const App: React.FC = () => {
                                           {f.status === 'pending' && (
                                               <div className="w-2 h-2 rounded-full bg-gray-300" />
                                           )}
+                                          {f.status === 'skipped' && (
+                                              <span className="text-gray-400 text-xs font-bold leading-none">—</span>
+                                          )}
                                       </span>
                                       <span className={`truncate flex-1 ${
-                                          f.status === 'error' ? 'text-red-600' :
-                                          f.status === 'done' ? 'text-green-700' :
-                                          f.status === 'uploading' ? 'text-blue-700 font-medium' :
+                                          f.status === 'error'    ? 'text-red-600' :
+                                          f.status === 'done'     ? 'text-green-700' :
+                                          f.status === 'uploading'? 'text-blue-700 font-medium' :
+                                          f.status === 'skipped'  ? 'text-gray-400 line-through' :
                                           'text-gray-500'
                                       }`}>
                                           {f.name}
                                       </span>
-                                      {f.newSize !== undefined && (
-                                          <span className="flex-shrink-0 flex items-center gap-1 text-xs font-mono">
-                                              {f.oldSize !== undefined ? (
-                                                  <>
-                                                      <span className="text-gray-400">{fmtKB(f.oldSize)}</span>
-                                                      <span className="text-gray-300">→</span>
-                                                      <span className="text-gray-600">{fmtKB(f.newSize)}</span>
-                                                      {diff !== null && diff !== 0 && (
-                                                          <span className={`px-1 rounded font-semibold ${diff > 0 ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600'}`}>
-                                                              {diff > 0 ? '+' : ''}{fmtKB(diff)}
-                                                          </span>
-                                                      )}
-                                                  </>
-                                              ) : (
-                                                  <span className="text-gray-400">{fmtKB(f.newSize)}</span>
-                                              )}
+                                      {f.status === 'skipped' ? (
+                                          <span className="flex-shrink-0 text-xs text-gray-400 italic">ya existe</span>
+                                      ) : f.newSize !== undefined && (
+                                          <span className="flex-shrink-0 text-xs font-mono text-gray-400">
+                                              {fmtKB(f.newSize)}
+                                          </span>
+                                      )}
+                                      {diff !== null && diff !== 0 && (
+                                          <span className={`flex-shrink-0 text-xs px-1 rounded font-semibold ${diff > 0 ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600'}`}>
+                                              {diff > 0 ? '+' : ''}{fmtKB(diff)}
                                           </span>
                                       )}
                                   </li>
@@ -1158,9 +1261,31 @@ const App: React.FC = () => {
                           })}
                       </ul>
                   </div>
+
+                  {/* Footer: REENVIAR + Cerrar */}
+                  {allFinished && (
+                      <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3">
+                          {failedFileObjects.length > 0 && (
+                              <button
+                                  onClick={handleReenviar}
+                                  className="flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
+                              >
+                                  <UploadCloud size={15} />
+                                  REENVIAR ({failedFileObjects.length})
+                              </button>
+                          )}
+                          <button
+                              onClick={() => { setUploadProgress({ isOpen: false, files: [], current: 0, total: 0 }); setFailedFileObjects([]); }}
+                              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border border-gray-200 hover:border-gray-300 rounded-lg transition-colors"
+                          >
+                              Cerrar
+                          </button>
+                      </div>
+                  )}
               </div>
           </div>
-      )}
+          );
+      })()}
 
       <Sidebar currentView={currentView} onNavigate={setCurrentView} userRole={currentUser.role} />
       
