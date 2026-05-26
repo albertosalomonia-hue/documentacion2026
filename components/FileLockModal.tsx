@@ -95,7 +95,8 @@ const FileLockModal: React.FC<FileLockModalProps> = ({
 
                             <p className="text-sm text-gray-600 leading-relaxed">
                                 Este usuario está editando el archivo.
-                                Puedes abrirlo en <strong>solo lectura</strong> o esperar a que lo libere.
+                                Puedes abrirlo en <strong>solo lectura</strong> (sin guardar cambios)
+                                o esperar a que lo libere para editarlo tú.
                             </p>
 
                             <div className="flex items-center gap-2 text-xs text-gray-400">

@@ -52,15 +52,26 @@ export const FileLockService = {
                 await supabase.from('file_locks').delete().eq('file_path', filePath);
             }
 
+            const now = new Date().toISOString();
             const { data, error } = await supabase
                 .from('file_locks')
-                .insert({ file_path: filePath, locked_by: username, locked_by_fullname: fullName })
+                .insert({ file_path: filePath, locked_by: username, locked_by_fullname: fullName, locked_at: now, last_heartbeat: now })
                 .select()
                 .single();
 
-            if (error || !data) return { lock: null, blockedBy: null };
+            if (error) {
+                // 23505 = unique_violation: another user inserted between our get() and insert()
+                if (error.code === '23505') {
+                    const winner = await FileLockService.get(filePath);
+                    if (winner && winner.locked_by !== username) return { lock: null, blockedBy: winner };
+                }
+                console.error('[FileLock] acquire error:', error.message, '— table "file_locks" may not exist.');
+                return { lock: null, blockedBy: null };
+            }
+            if (!data) return { lock: null, blockedBy: null };
             return { lock: data as FileLock, blockedBy: null };
-        } catch {
+        } catch (e) {
+            console.error('[FileLock] acquire exception:', e);
             return { lock: null, blockedBy: null };
         }
     },
@@ -83,6 +94,18 @@ export const FileLockService = {
                 .eq('file_path', filePath)
                 .eq('locked_by', username);
         } catch { /* silent */ }
+    },
+
+    getMany: async (filePaths: string[]): Promise<Record<string, FileLock>> => {
+        if (!filePaths.length) return {};
+        try {
+            const { data } = await supabase
+                .from('file_locks')
+                .select('*')
+                .in('file_path', filePaths);
+            if (!data) return {};
+            return Object.fromEntries((data as FileLock[]).map(l => [l.file_path, l]));
+        } catch { return {}; }
     },
 
     releaseAll: async (username: string): Promise<void> => {

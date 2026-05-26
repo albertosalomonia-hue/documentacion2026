@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
-import { Briefcase, FolderOpen, RefreshCw, X, CheckCircle, Loader2, AlertCircle, Upload, Zap, Lock } from 'lucide-react';
+import { Briefcase, FolderOpen, RefreshCw, X, CheckCircle, Loader2, AlertCircle, Upload, Zap, Lock, UserRound } from 'lucide-react';
+import type { FileLock } from '../services/fileLockService';
 
 export interface WorkspaceItem {
     name: string;
@@ -20,6 +21,8 @@ interface WorkspacePanelProps {
     syncStatuses: Record<string, 'idle' | 'syncing' | 'done' | 'error' | 'missing'>;
     autoSyncEnabled?: boolean;
     lockedByMe?: Set<string>;
+    locksMap?: Record<string, FileLock>;
+    currentUsername?: string;
 }
 
 const fmtSize = (b: number) =>
@@ -29,7 +32,8 @@ const fsApiSupported = typeof window !== 'undefined' && 'showDirectoryPicker' in
 
 const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
     items, dirHandle, dirName, onConfigureDir, onSyncAll, onRemove,
-    onFileSelected, isSyncing, syncStatuses, autoSyncEnabled = false, lockedByMe,
+    onFileSelected, isSyncing, syncStatuses, autoSyncEnabled = false,
+    lockedByMe, locksMap = {}, currentUsername,
 }) => {
     const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -182,6 +186,19 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
                                             >
                                                 {item.dropboxPath}
                                             </span>
+                                            {locksMap[item.dropboxPath] && (() => {
+                                                const lock = locksMap[item.dropboxPath];
+                                                const isMe = lock.locked_by === currentUsername;
+                                                return (
+                                                    <span
+                                                        className={`mt-1 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${isMe ? 'bg-orange-500 text-white' : 'bg-red-500 text-white'}`}
+                                                        title={`Abierto desde ${new Date(lock.locked_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}`}
+                                                    >
+                                                        <UserRound size={9} />
+                                                        {isMe ? 'Tú' : lock.locked_by_fullname}
+                                                    </span>
+                                                );
+                                            })()}
                                         </td>
                                         <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
                                             {new Date(item.downloadedAt).toLocaleDateString('es', {

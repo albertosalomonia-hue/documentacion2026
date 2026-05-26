@@ -133,7 +133,7 @@ const App: React.FC = () => {
       isOpen: boolean;
       file: DropboxFile | null;
       blockedBy: FileLock | null;
-      context: 'excel' | 'trabajos';
+      context: 'excel' | 'trabajos' | 'local';
   }>({ isOpen: false, file: null, blockedBy: null, context: 'excel' });
 
   // Refs so intervals don't need to re-register when state updates
@@ -150,6 +150,8 @@ const App: React.FC = () => {
   });
   const [trabajosSyncStatuses, setTrabajosSyncStatuses] = useState<Record<string, 'idle'|'syncing'|'done'|'error'|'missing'>>({});
   const [isTrabajosSyncing, setIsTrabajosSyncing] = useState(false);
+
+  const [trabajosLocks, setTrabajosLocks] = useState<Record<string, FileLock>>({});
 
   // Keep refs up-to-date for use inside stable intervals
   trabajosItemsRef.current = trabajosItems;
@@ -333,6 +335,27 @@ const App: React.FC = () => {
     return () => clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trabajosDirHandle, token, currentUser]);
+
+  // 6. Poll locks for workspace items every 20 s so the badge stays fresh
+  const refreshTrabajosLocks = useCallback(async () => {
+      const paths = trabajosItemsRef.current.map(i => i.dropboxPath);
+      if (!paths.length) { setTrabajosLocks({}); return; }
+      const locks = await FileLockService.getMany(paths);
+      setTrabajosLocks(locks);
+  }, []);
+
+  useEffect(() => {
+      if (!currentUser) return;
+      refreshTrabajosLocks();
+      const id = setInterval(refreshTrabajosLocks, 20000);
+      return () => clearInterval(id);
+  }, [currentUser, refreshTrabajosLocks]);
+
+  // Re-fetch locks immediately when workspace items change
+  useEffect(() => {
+      if (currentUser) refreshTrabajosLocks();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trabajosItems]);
 
   // Helper to fetch global token
   const fetchGlobalToken = async () => {
@@ -1110,7 +1133,10 @@ const App: React.FC = () => {
               setFileLockModal({ isOpen: true, file, blockedBy, context: 'trabajos' });
               return;
           }
-          if (lock) setMyActiveLocks(prev => ({ ...prev, [file.path_lower]: lock }));
+          if (lock) {
+              setMyActiveLocks(prev => ({ ...prev, [file.path_lower]: lock }));
+              refreshTrabajosLocks();
+          }
       }
       await doDownloadToTrabajos(file);
   };
@@ -1163,7 +1189,7 @@ const App: React.FC = () => {
 
   const handleRemoveFromTrabajos = (dropboxPath: string) => {
       if (currentUser && myActiveLocksRef.current[dropboxPath]) {
-          FileLockService.release(dropboxPath, currentUser.username);
+          FileLockService.release(dropboxPath, currentUser.username).then(refreshTrabajosLocks);
           setMyActiveLocks(prev => { const n = { ...prev }; delete n[dropboxPath]; return n; });
       }
       setTrabajosItems(prev => {
@@ -1310,18 +1336,11 @@ const App: React.FC = () => {
       } catch (err: any) { alert('Error: ' + err.message); }
   };
 
-  const handleOpenLocal = async (file: DropboxFile) => {
+  const doOpenLocal = async (file: DropboxFile) => {
       if (!token) return;
       try {
           const service = getDropboxService();
           const link = await service.getTemporaryLink(file.path_lower);
-
-          // Use the direct Dropbox link so the browser saves a real local copy.
-          // Dropbox serves the file with Content-Disposition: attachment, so
-          // the browser always downloads it to disk regardless of the `download`
-          // attribute.  Once on disk the file opens in the locally installed
-          // program without any Office "Restricted Sites Zone" error (it is now
-          // a local file, not a remote URL).
           const a = document.createElement('a');
           a.href = link;
           a.download = file.name;
@@ -1329,9 +1348,24 @@ const App: React.FC = () => {
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
-
           await NotificationService.create('system', `Abrió archivo: ${file.name}`, currentUser?.username || 'unknown');
       } catch (err: any) { alert('Error al abrir: ' + err.message); }
+  };
+
+  const handleOpenLocal = async (file: DropboxFile) => {
+      if (!token) return;
+      const canEdit = currentUser ? getEffectivePermissions(file, currentUser).includes('write') : false;
+      if (canEdit) {
+          const { lock, blockedBy } = await FileLockService.acquire(
+              file.path_lower, currentUser!.username, currentUser!.fullName
+          );
+          if (blockedBy) {
+              setFileLockModal({ isOpen: true, file, blockedBy, context: 'local' });
+              return;
+          }
+          if (lock) setMyActiveLocks(prev => ({ ...prev, [file.path_lower]: lock }));
+      }
+      await doOpenLocal(file);
   };
 
   const handleManualUploadClick = async () => {
@@ -1529,8 +1563,11 @@ const App: React.FC = () => {
                   if (ctx === 'excel') {
                       setExcelReadOnly(true);
                       setExcelEditFile(f);
-                  } else {
+                  } else if (ctx === 'trabajos') {
                       doDownloadToTrabajos(f);
+                  } else {
+                      // 'local': open without acquiring lock — read-only intent
+                      doOpenLocal(f);
                   }
               }}
               onEditAvailable={async () => {
@@ -1544,8 +1581,10 @@ const App: React.FC = () => {
                   if (ctx === 'excel') {
                       setExcelReadOnly(false);
                       setExcelEditFile(f);
-                  } else {
+                  } else if (ctx === 'trabajos') {
                       await doDownloadToTrabajos(f);
+                  } else {
+                      await doOpenLocal(f);
                   }
               }}
           />
@@ -1976,6 +2015,8 @@ const App: React.FC = () => {
                     syncStatuses={trabajosSyncStatuses}
                     autoSyncEnabled={!!trabajosDirHandle}
                     lockedByMe={new Set(Object.keys(myActiveLocks))}
+                    locksMap={trabajosLocks}
+                    currentUsername={currentUser.username}
                 />
             </div>
         ) : (
