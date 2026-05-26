@@ -394,8 +394,12 @@ export class DropboxService {
   }
 
   async createFolder(path: string): Promise<DropboxFile> {
+    // Normalize: single leading slash, no double slashes, no trailing slash
+    const normalized = ('/' + path.replace(/^\/+/, ''))
+        .replace(/\/\/+/g, '/')
+        .replace(/\/$/, '');
     const response = await this.request('/files/create_folder_v2', {
-      path,
+      path: normalized,
       autorename: true
     });
     return response.metadata;

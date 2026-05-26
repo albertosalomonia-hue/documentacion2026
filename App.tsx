@@ -602,16 +602,19 @@ const App: React.FC = () => {
           return; // Button is disabled, do nothing
       }
       
-      const folderName = prompt("Nombre de la nueva carpeta:");
-      if (!folderName) return;
+      const raw = prompt("Nombre de la nueva carpeta:")?.trim() ?? '';
+      if (!raw) return;
+      if (raw.includes('/')) { alert("El nombre de la carpeta no puede contener '/'."); return; }
+      const folderName = raw;
 
-      const newFolderPath = `${currentPath}/${folderName}`.toLowerCase();
+      const base = currentPath.replace(/\/+$/, '');
+      const newFolderPath = (base === '' ? `/${folderName}` : `${base}/${folderName}`).toLowerCase();
       if (isRestrictedPath(newFolderPath)) { alert("Nombre restringido."); return; }
 
       try {
           setIsLoading(true);
           const service = getDropboxService();
-          await service.createFolder(`${currentPath}/${folderName}`);
+          await service.createFolder(base === '' ? `/${folderName}` : `${base}/${folderName}`);
 
           // NOTIFY
           await NotificationService.create('upload', `Creó carpeta: ${folderName}`, currentUser?.username || 'unknown');
