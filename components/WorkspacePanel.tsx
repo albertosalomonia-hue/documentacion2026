@@ -74,19 +74,27 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
                         </div>
                     </div>
                 </div>
-                {items.length > 0 && (
-                    <button
-                        onClick={onSyncAll}
-                        disabled={isSyncing}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-colors shadow-sm"
-                    >
-                        {isSyncing
-                            ? <Loader2 size={16} className="animate-spin" />
-                            : <RefreshCw size={16} />
-                        }
-                        Sincronizar
-                    </button>
-                )}
+                {items.length > 0 && (() => {
+                    const lockedByOtherCount = items.filter(i => {
+                        const lk = locksMap[i.dropboxPath];
+                        return lk && lk.locked_by !== currentUsername;
+                    }).length;
+                    const allBlocked = lockedByOtherCount === items.length;
+                    return (
+                        <button
+                            onClick={onSyncAll}
+                            disabled={isSyncing || allBlocked}
+                            title={allBlocked ? 'Todos los archivos están bloqueados por otros usuarios' : lockedByOtherCount > 0 ? `${lockedByOtherCount} archivo(s) bloqueado(s) serán omitidos` : undefined}
+                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-colors shadow-sm"
+                        >
+                            {isSyncing
+                                ? <Loader2 size={16} className="animate-spin" />
+                                : <RefreshCw size={16} />
+                            }
+                            Sincronizar{lockedByOtherCount > 0 && !allBlocked ? ` (${items.length - lockedByOtherCount})` : ''}
+                        </button>
+                    );
+                })()}
             </div>
 
             {/* Directory status card */}
@@ -224,25 +232,34 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
                                         <td className="px-4 py-3">
                                             <div className="flex items-center justify-end gap-1.5">
                                                 {/* Manual upload — always shown, essential when no FS API */}
-                                                <input
-                                                    type="file"
-                                                    ref={el => { fileInputRefs.current[item.dropboxPath] = el; }}
-                                                    className="hidden"
-                                                    onChange={e => {
-                                                        const f = e.target.files?.[0];
-                                                        if (f) onFileSelected(item, f);
-                                                        e.target.value = '';
-                                                    }}
-                                                />
-                                                <button
-                                                    onClick={() => fileInputRefs.current[item.dropboxPath]?.click()}
-                                                    disabled={status === 'syncing'}
-                                                    className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-40 transition-colors"
-                                                    title="Seleccionar archivo editado y subir a Dropbox"
-                                                >
-                                                    <Upload size={12} />
-                                                    Subir editado
-                                                </button>
+                                                {(() => {
+                                                    const lockHolder = locksMap[item.dropboxPath];
+                                                    const lockedByOther = !!lockHolder && lockHolder.locked_by !== currentUsername;
+                                                    return (
+                                                        <>
+                                                        <input
+                                                            type="file"
+                                                            ref={el => { fileInputRefs.current[item.dropboxPath] = el; }}
+                                                            className="hidden"
+                                                            onChange={e => {
+                                                                if (lockedByOther) return;
+                                                                const f = e.target.files?.[0];
+                                                                if (f) onFileSelected(item, f);
+                                                                e.target.value = '';
+                                                            }}
+                                                        />
+                                                        <button
+                                                            onClick={() => { if (!lockedByOther) fileInputRefs.current[item.dropboxPath]?.click(); }}
+                                                            disabled={status === 'syncing' || lockedByOther}
+                                                            className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${lockedByOther ? 'border-gray-200 text-gray-400 cursor-not-allowed opacity-50' : 'border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-40'}`}
+                                                            title={lockedByOther ? `${lockHolder!.locked_by_fullname} está editando — espera su sincronización` : 'Seleccionar archivo editado y subir a Dropbox'}
+                                                        >
+                                                            <Upload size={12} />
+                                                            Subir editado
+                                                        </button>
+                                                        </>
+                                                    );
+                                                })()}
                                                 <button
                                                     onClick={() => onRemove(item.dropboxPath)}
                                                     disabled={status === 'syncing'}

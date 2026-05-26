@@ -605,23 +605,40 @@ const App: React.FC = () => {
       return { name: 'Programa predeterminado', color: 'text-gray-500' };
   };
 
-  const handleContextMenuOpen = (file: DropboxFile, x: number, y: number) => {
+  const handleContextMenuOpen = async (file: DropboxFile, x: number, y: number) => {
       const perms = getEffectivePermissions(file, currentUser!);
       const isFolder = file['.tag'] === 'folder';
       const canShare = !!(currentUser && (currentUser.role === 'admin' || (currentUser.role === 'jefe' && (perms.includes('write') || perms.includes('read')))));
-      const lock = visibleFileLocks[file.path_lower] ?? null;
-      const lockedBy = (lock && lock.locked_by !== currentUser!.username) ? lock : null;
+
+      // Show menu immediately using cached data so it feels instant
+      const cachedLock = visibleFileLocks[file.path_lower] ?? null;
+      const cachedLockedBy = (cachedLock && cachedLock.locked_by !== currentUser!.username) ? cachedLock : null;
       setContextMenu({
-          isOpen: true,
-          x,
-          y,
-          file,
+          isOpen: true, x, y, file,
           canDelete: perms.includes('delete'),
           canDownload: perms.includes('download') && !isFolder,
           canShare,
           canRename: isFolder ? canRenameFolder(file, currentUser!) : false,
-          lockedBy,
+          lockedBy: cachedLockedBy,
       });
+
+      // Fresh lock check from Supabase — updates the menu if still open for the same file
+      if (!isFolder) {
+          const freshLock = await FileLockService.get(file.path_lower);
+          const freshLockedBy = (freshLock && freshLock.locked_by !== currentUser!.username) ? freshLock : null;
+          // Keep visibleFileLocks cache in sync
+          setVisibleFileLocks(prev => {
+              if (freshLock) return { ...prev, [file.path_lower]: freshLock };
+              const next = { ...prev };
+              delete next[file.path_lower];
+              return next;
+          });
+          setContextMenu(prev =>
+              prev.isOpen && prev.file?.path_lower === file.path_lower
+                  ? { ...prev, lockedBy: freshLockedBy }
+                  : prev
+          );
+      }
   };
 
   const initiateDropboxAuth = async () => {
@@ -1186,6 +1203,10 @@ const App: React.FC = () => {
       const newStatuses: Record<string, 'idle'|'syncing'|'done'|'error'|'missing'> = {};
 
       for (const item of trabajosItems) {
+          // Skip files locked by another user — they own this version
+          const lockHolder = trabajosLocks[item.dropboxPath];
+          if (lockHolder && lockHolder.locked_by !== currentUser?.username) continue;
+
           newStatuses[item.dropboxPath] = 'syncing';
           setTrabajosSyncStatuses({ ...newStatuses });
           try {
