@@ -161,13 +161,20 @@ export class DropboxService {
       });
 
       if (response.status === 401) {
-        // Token expired or invalid
         throw new Error('Unauthorized: Invalid Access Token');
+      }
+
+      if (response.status === 429) {
+        const retryAfter = parseInt(response.headers.get('Retry-After') || '30', 10);
+        const errorData = await response.json().catch(() => ({}));
+        const errorSummary = (typeof errorData === 'object' ? errorData.error_summary : null) || 'too_many_write_operations/';
+        const err: any = new Error(errorSummary);
+        err.retryAfter = retryAfter;
+        throw err;
       }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error_summary: response.statusText }));
-        // Handle specific Dropbox error structures
         const errorSummary = typeof errorData === 'string' ? errorData : (errorData.error_summary || JSON.stringify(errorData));
         throw new Error(errorSummary || 'Dropbox API Error');
       }
