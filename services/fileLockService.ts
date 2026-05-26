@@ -12,8 +12,30 @@ export interface FileLock {
 // Lock considered stale after 15 minutes of no heartbeat
 const LOCK_EXPIRY_MS = 15 * 60 * 1000;
 
+// Cached availability — avoids repeated 404s when the table doesn't exist yet
+let _tableAvailable: boolean | null = null;
+
+async function tableAvailable(): Promise<boolean> {
+    if (_tableAvailable !== null) return _tableAvailable;
+    try {
+        const { error } = await supabase.from('file_locks').select('id').limit(1);
+        // 42P01 = relation does not exist
+        _tableAvailable = !error || error.code !== '42P01';
+        if (!_tableAvailable) {
+            console.warn('[FileLock] Table "file_locks" not found. Run the SQL migration in Supabase.');
+        }
+    } catch {
+        _tableAvailable = false;
+    }
+    return _tableAvailable;
+}
+
 export const FileLockService = {
+    /** Call once the table has been created to re-enable locking. */
+    resetAvailability: () => { _tableAvailable = null; },
+
     get: async (filePath: string): Promise<FileLock | null> => {
+        if (!await tableAvailable()) return null;
         try {
             const { data } = await supabase
                 .from('file_locks')
@@ -35,6 +57,7 @@ export const FileLockService = {
         username: string,
         fullName: string,
     ): Promise<{ lock: FileLock | null; blockedBy: FileLock | null }> => {
+        if (!await tableAvailable()) return { lock: null, blockedBy: null };
         try {
             const existing = await FileLockService.get(filePath);
             if (existing) {
@@ -77,6 +100,7 @@ export const FileLockService = {
     },
 
     release: async (filePath: string, username: string): Promise<void> => {
+        if (!await tableAvailable()) return;
         try {
             await supabase
                 .from('file_locks')
@@ -87,6 +111,7 @@ export const FileLockService = {
     },
 
     heartbeat: async (filePath: string, username: string): Promise<void> => {
+        if (!await tableAvailable()) return;
         try {
             await supabase
                 .from('file_locks')
@@ -97,7 +122,7 @@ export const FileLockService = {
     },
 
     getMany: async (filePaths: string[]): Promise<Record<string, FileLock>> => {
-        if (!filePaths.length) return {};
+        if (!filePaths.length || !await tableAvailable()) return {};
         try {
             const { data } = await supabase
                 .from('file_locks')
@@ -109,6 +134,7 @@ export const FileLockService = {
     },
 
     releaseAll: async (username: string): Promise<void> => {
+        if (!await tableAvailable()) return;
         try {
             await supabase.from('file_locks').delete().eq('locked_by', username);
         } catch { /* silent */ }

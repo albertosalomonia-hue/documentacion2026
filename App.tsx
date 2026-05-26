@@ -152,10 +152,13 @@ const App: React.FC = () => {
   const [isTrabajosSyncing, setIsTrabajosSyncing] = useState(false);
 
   const [trabajosLocks, setTrabajosLocks] = useState<Record<string, FileLock>>({});
+  const [visibleFileLocks, setVisibleFileLocks] = useState<Record<string, FileLock>>({});
+  const filesRef = React.useRef<DropboxFile[]>([]);
 
   // Keep refs up-to-date for use inside stable intervals
   trabajosItemsRef.current = trabajosItems;
   trabajosSyncStatusesRef.current = trabajosSyncStatuses;
+  filesRef.current = files;
 
   const [contextMenu, setContextMenu] = useState<{
       isOpen: boolean;
@@ -166,7 +169,8 @@ const App: React.FC = () => {
       canDownload: boolean;
       canShare: boolean;
       canRename: boolean;
-  }>({ isOpen: false, x: 0, y: 0, file: null, canDelete: false, canDownload: false, canShare: false, canRename: false });
+      lockedBy: FileLock | null;
+  }>({ isOpen: false, x: 0, y: 0, file: null, canDelete: false, canDownload: false, canShare: false, canRename: false, lockedBy: null });
 
   // 1. Initialize Auth and Token
   useEffect(() => {
@@ -323,8 +327,10 @@ const App: React.FC = () => {
               return updated;
             });
             setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'done' }));
+            // Release lock after successful auto-sync so others can access the file
             if (myActiveLocksRef.current[item.dropboxPath]) {
-              FileLockService.heartbeat(item.dropboxPath, currentUser.username);
+              FileLockService.release(item.dropboxPath, currentUser.username);
+              setMyActiveLocks(prev => { const n = { ...prev }; delete n[item.dropboxPath]; return n; });
             }
           } catch {
             setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'error' }));
@@ -356,6 +362,29 @@ const App: React.FC = () => {
       if (currentUser) refreshTrabajosLocks();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trabajosItems]);
+
+  // 7. Poll locks for ALL visible files every 20 s (drives context-menu lock state)
+  const refreshVisibleLocks = useCallback(async () => {
+      const paths = filesRef.current
+          .filter(f => f['.tag'] !== 'folder')
+          .map(f => f.path_lower);
+      if (!paths.length) { setVisibleFileLocks({}); return; }
+      const locks = await FileLockService.getMany(paths);
+      setVisibleFileLocks(locks);
+  }, []);
+
+  useEffect(() => {
+      if (!currentUser) return;
+      refreshVisibleLocks();
+      const id = setInterval(refreshVisibleLocks, 20000);
+      return () => clearInterval(id);
+  }, [currentUser, refreshVisibleLocks]);
+
+  // Refresh when the file list changes (navigation, upload, delete)
+  useEffect(() => {
+      if (currentUser) refreshVisibleLocks();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files]);
 
   // Helper to fetch global token
   const fetchGlobalToken = async () => {
@@ -580,6 +609,8 @@ const App: React.FC = () => {
       const perms = getEffectivePermissions(file, currentUser!);
       const isFolder = file['.tag'] === 'folder';
       const canShare = !!(currentUser && (currentUser.role === 'admin' || (currentUser.role === 'jefe' && (perms.includes('write') || perms.includes('read')))));
+      const lock = visibleFileLocks[file.path_lower] ?? null;
+      const lockedBy = (lock && lock.locked_by !== currentUser!.username) ? lock : null;
       setContextMenu({
           isOpen: true,
           x,
@@ -589,6 +620,7 @@ const App: React.FC = () => {
           canDownload: perms.includes('download') && !isFolder,
           canShare,
           canRename: isFolder ? canRenameFolder(file, currentUser!) : false,
+          lockedBy,
       });
   };
 
@@ -1164,6 +1196,11 @@ const App: React.FC = () => {
                   const localFile = await fh.getFile();
                   await service.uploadFile('', localFile, item.dropboxPath);
                   newStatuses[item.dropboxPath] = 'done';
+                  // Release lock after successful sync so others can access the file
+                  if (currentUser && myActiveLocksRef.current[item.dropboxPath]) {
+                      FileLockService.release(item.dropboxPath, currentUser.username);
+                      setMyActiveLocks(prev => { const n = { ...prev }; delete n[item.dropboxPath]; return n; });
+                  }
               }
           } catch {
               newStatuses[item.dropboxPath] = 'error';
@@ -1172,6 +1209,7 @@ const App: React.FC = () => {
       }
 
       setIsTrabajosSyncing(false);
+      refreshTrabajosLocks();
       await refreshFiles();
   };
 
@@ -1182,6 +1220,12 @@ const App: React.FC = () => {
           const service = getDropboxService();
           await service.uploadFile('', file, item.dropboxPath);
           setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'done' }));
+          // Release lock after successful sync so others can access the file
+          if (currentUser && myActiveLocksRef.current[item.dropboxPath]) {
+              FileLockService.release(item.dropboxPath, currentUser.username);
+              setMyActiveLocks(prev => { const n = { ...prev }; delete n[item.dropboxPath]; return n; });
+              refreshTrabajosLocks();
+          }
           await refreshFiles();
       } catch (err: any) {
           setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'error' }));
@@ -1751,6 +1795,16 @@ const App: React.FC = () => {
                               {getEditorInfo(contextMenu.file.name).name}
                           </div>
                       </div>
+                      {/* Lock banner — shown when another user holds the lock */}
+                      {contextMenu.lockedBy && (
+                          <div className="mx-2 mt-1.5 mb-0.5 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                              <Lock size={12} className="text-red-500 flex-shrink-0" />
+                              <div className="min-w-0">
+                                  <p className="text-[10px] font-bold text-red-600 uppercase tracking-wide leading-tight">Archivo bloqueado</p>
+                                  <p className="text-xs text-red-800 font-semibold truncate">{contextMenu.lockedBy.locked_by_fullname}</p>
+                              </div>
+                          </div>
+                      )}
                       <div className="py-1">
                           <button
                               className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-blue-50 flex items-center gap-2.5 transition-colors"
@@ -1760,17 +1814,21 @@ const App: React.FC = () => {
                           </button>
                           {contextMenu.canDownload && (
                               <button
-                                  className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-green-50 flex items-center gap-2.5 transition-colors"
-                                  onClick={() => { handleDownload(contextMenu.file!); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
-                                  <Download size={14} className="text-green-500 shrink-0" />
+                                  disabled={!!contextMenu.lockedBy}
+                                  className={`w-full px-4 py-2 text-sm text-left flex items-center gap-2.5 transition-colors ${contextMenu.lockedBy ? 'opacity-40 cursor-not-allowed text-gray-400' : 'text-gray-700 hover:bg-green-50'}`}
+                                  title={contextMenu.lockedBy ? `${contextMenu.lockedBy.locked_by_fullname} está editando este archivo` : undefined}
+                                  onClick={() => { if (!contextMenu.lockedBy) { handleDownload(contextMenu.file!); setContextMenu(prev => ({ ...prev, isOpen: false })); } }}>
+                                  <Download size={14} className={contextMenu.lockedBy ? 'text-gray-400 shrink-0' : 'text-green-500 shrink-0'} />
                                   <span>Descargar</span>
                               </button>
                           )}
                           {contextMenu.canDownload && (
                               <button
-                                  className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-blue-50 flex items-center gap-2.5 transition-colors"
-                                  onClick={() => { handleDownloadToTrabajos(contextMenu.file!); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
-                                  <Briefcase size={14} className="text-blue-500 shrink-0" />
+                                  disabled={!!contextMenu.lockedBy}
+                                  className={`w-full px-4 py-2 text-sm text-left flex items-center gap-2.5 transition-colors ${contextMenu.lockedBy ? 'opacity-40 cursor-not-allowed text-gray-400' : 'text-gray-700 hover:bg-blue-50'}`}
+                                  title={contextMenu.lockedBy ? `${contextMenu.lockedBy.locked_by_fullname} está editando este archivo` : undefined}
+                                  onClick={() => { if (!contextMenu.lockedBy) { handleDownloadToTrabajos(contextMenu.file!); setContextMenu(prev => ({ ...prev, isOpen: false })); } }}>
+                                  <Briefcase size={14} className={contextMenu.lockedBy ? 'text-gray-400 shrink-0' : 'text-blue-500 shrink-0'} />
                                   <span>Guardar en Trabajos</span>
                               </button>
                           )}
