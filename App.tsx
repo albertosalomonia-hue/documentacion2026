@@ -6,6 +6,9 @@ import LoginScreen from './components/LoginScreen';
 import FilePreviewModal from './components/FilePreviewModal';
 import ExcelEditorModal from './components/ExcelEditorModal';
 import WorkspacePanel, { WorkspaceItem } from './components/WorkspacePanel';
+import FileLockModal from './components/FileLockModal';
+import { FileLockService } from './services/fileLockService';
+import type { FileLock } from './services/fileLockService';
 import ForcePasswordChangeModal from './components/ForcePasswordChangeModal';
 import UserManagement from './components/UserManagement';
 import UserSettings from './components/UserSettings';
@@ -123,6 +126,22 @@ const App: React.FC = () => {
       search: string;
   }>({ isOpen: false, isMoving: false, selectedFolder: null, folders: [], isLoadingFolders: false, search: '' });
 
+  // --- File locking state ---
+  const [myActiveLocks, setMyActiveLocks] = useState<Record<string, FileLock>>({});
+  const [excelReadOnly, setExcelReadOnly] = useState(false);
+  const [fileLockModal, setFileLockModal] = useState<{
+      isOpen: boolean;
+      file: DropboxFile | null;
+      blockedBy: FileLock | null;
+      context: 'excel' | 'trabajos';
+  }>({ isOpen: false, file: null, blockedBy: null, context: 'excel' });
+
+  // Refs so intervals don't need to re-register when state updates
+  const myActiveLocksRef = React.useRef<Record<string, FileLock>>({});
+  myActiveLocksRef.current = myActiveLocks;
+  const trabajosItemsRef = React.useRef<WorkspaceItem[]>([]);
+  const trabajosSyncStatusesRef = React.useRef<Record<string, string>>({});
+
   // --- Workspace (Trabajos) state ---
   const [trabajosDirHandle, setTrabajosDirHandle] = useState<any>(null);
   const [trabajosDirName, setTrabajosDirName] = useState<string | null>(() => localStorage.getItem('trabajos_dir_name'));
@@ -131,6 +150,10 @@ const App: React.FC = () => {
   });
   const [trabajosSyncStatuses, setTrabajosSyncStatuses] = useState<Record<string, 'idle'|'syncing'|'done'|'error'|'missing'>>({});
   const [isTrabajosSyncing, setIsTrabajosSyncing] = useState(false);
+
+  // Keep refs up-to-date for use inside stable intervals
+  trabajosItemsRef.current = trabajosItems;
+  trabajosSyncStatusesRef.current = trabajosSyncStatuses;
 
   const [contextMenu, setContextMenu] = useState<{
       isOpen: boolean;
@@ -250,6 +273,67 @@ const App: React.FC = () => {
     return () => clearInterval(id);
   }, []);
 
+  // 3. Heartbeat — keep held locks alive every 2 minutes
+  useEffect(() => {
+    if (!currentUser) return;
+    const id = setInterval(() => {
+      Object.keys(myActiveLocksRef.current).forEach(path =>
+        FileLockService.heartbeat(path, currentUser.username)
+      );
+    }, 2 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [currentUser]);
+
+  // 4. Release all locks when the page/tab is closed
+  useEffect(() => {
+    const handler = () => {
+      if (currentUser) FileLockService.releaseAll(currentUser.username);
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [currentUser]);
+
+  // 5. Auto-sync Trabajos — poll every 30 s for local file changes
+  useEffect(() => {
+    if (!token || !currentUser) return;
+    const id = setInterval(async () => {
+      const handle = trabajosDirHandle; // stable closure
+      if (!handle) return;
+      const service = new DropboxService(token);
+      for (const item of trabajosItemsRef.current) {
+        if (trabajosSyncStatusesRef.current[item.dropboxPath] === 'syncing') continue;
+        try {
+          const fh = await handle.getFileHandle(item.name).catch(() => null);
+          if (!fh) continue;
+          const localFile: File = await fh.getFile();
+          if (localFile.lastModified <= new Date(item.downloadedAt).getTime()) continue;
+          // File was modified — auto-upload
+          setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'syncing' }));
+          try {
+            await service.uploadFile('', localFile, item.dropboxPath);
+            setTrabajosItems(prev => {
+              const updated = prev.map(f =>
+                f.dropboxPath === item.dropboxPath
+                  ? { ...f, downloadedAt: new Date().toISOString() }
+                  : f
+              );
+              localStorage.setItem('trabajos_v1', JSON.stringify(updated));
+              return updated;
+            });
+            setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'done' }));
+            if (myActiveLocksRef.current[item.dropboxPath]) {
+              FileLockService.heartbeat(item.dropboxPath, currentUser.username);
+            }
+          } catch {
+            setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'error' }));
+          }
+        } catch { /* directory permission error — skip */ }
+      }
+    }, 30000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trabajosDirHandle, token, currentUser]);
+
   // Helper to fetch global token
   const fetchGlobalToken = async () => {
       try {
@@ -368,12 +452,13 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     if (currentUser) {
-        // NOTIFY LOGOUT (Optional, but good for "movements")
         NotificationService.create('system', `Usuario cerró sesión: ${currentUser.username}`, currentUser.username);
+        FileLockService.releaseAll(currentUser.username);
     }
     setCurrentUser(null);
     setFiles([]);
     setCurrentView('plans');
+    setMyActiveLocks({});
     localStorage.removeItem('ayala_current_user');
   };
 
@@ -584,11 +669,36 @@ const App: React.FC = () => {
       setCurrentPath(path);
   };
 
+  const handleOpenExcel = async (file: DropboxFile) => {
+      const canEditPerm = currentUser ? getEffectivePermissions(file, currentUser).includes('write') : false;
+      if (canEditPerm) {
+          const { lock, blockedBy } = await FileLockService.acquire(
+              file.path_lower, currentUser!.username, currentUser!.fullName
+          );
+          if (blockedBy) {
+              setFileLockModal({ isOpen: true, file, blockedBy, context: 'excel' });
+              return;
+          }
+          if (lock) setMyActiveLocks(prev => ({ ...prev, [file.path_lower]: lock }));
+      }
+      setExcelReadOnly(!canEditPerm);
+      setExcelEditFile(file);
+  };
+
+  const handleExcelClose = () => {
+      if (excelEditFile && currentUser && myActiveLocksRef.current[excelEditFile.path_lower]) {
+          FileLockService.release(excelEditFile.path_lower, currentUser.username);
+          setMyActiveLocks(prev => { const n = { ...prev }; delete n[excelEditFile.path_lower]; return n; });
+      }
+      setExcelEditFile(null);
+      setExcelReadOnly(false);
+  };
+
   const handleCardClick = (file: DropboxFile) => {
       if (file['.tag'] === 'folder') {
           handleNavigate(file.path_lower);
       } else if (file.name.match(/\.(xlsx|xls)$/i)) {
-          setExcelEditFile(file);
+          handleOpenExcel(file);
       } else {
           setPreviewFile(file);
       }
@@ -947,7 +1057,7 @@ const App: React.FC = () => {
       } catch { /* user cancelled */ }
   };
 
-  const handleDownloadToTrabajos = async (file: DropboxFile) => {
+  const doDownloadToTrabajos = async (file: DropboxFile) => {
       if (!token) return;
       try {
           const service = getDropboxService();
@@ -987,6 +1097,22 @@ const App: React.FC = () => {
       } catch (err: any) {
           alert(`Error al guardar en Trabajos: ${err.message}`);
       }
+  };
+
+  const handleDownloadToTrabajos = async (file: DropboxFile) => {
+      if (!token) return;
+      const canEdit = currentUser ? getEffectivePermissions(file, currentUser).includes('write') : false;
+      if (canEdit) {
+          const { lock, blockedBy } = await FileLockService.acquire(
+              file.path_lower, currentUser!.username, currentUser!.fullName
+          );
+          if (blockedBy) {
+              setFileLockModal({ isOpen: true, file, blockedBy, context: 'trabajos' });
+              return;
+          }
+          if (lock) setMyActiveLocks(prev => ({ ...prev, [file.path_lower]: lock }));
+      }
+      await doDownloadToTrabajos(file);
   };
 
   const handleSincronizarAll = async () => {
@@ -1036,6 +1162,10 @@ const App: React.FC = () => {
   };
 
   const handleRemoveFromTrabajos = (dropboxPath: string) => {
+      if (currentUser && myActiveLocksRef.current[dropboxPath]) {
+          FileLockService.release(dropboxPath, currentUser.username);
+          setMyActiveLocks(prev => { const n = { ...prev }; delete n[dropboxPath]; return n; });
+      }
       setTrabajosItems(prev => {
           const updated = prev.filter(f => f.dropboxPath !== dropboxPath);
           localStorage.setItem('trabajos_v1', JSON.stringify(updated));
@@ -1377,12 +1507,48 @@ const App: React.FC = () => {
       {excelEditFile && (
         <ExcelEditorModal
           file={excelEditFile}
-          onClose={() => setExcelEditFile(null)}
+          onClose={handleExcelClose}
           onDownload={handleDownload}
           getPreviewUrl={() => getDropboxService().getTemporaryLink(excelEditFile.path_lower)}
           onSave={handleExcelSave}
-          canEdit={currentUser ? getEffectivePermissions(excelEditFile, currentUser).includes('write') : false}
+          canEdit={!excelReadOnly && (currentUser ? getEffectivePermissions(excelEditFile, currentUser).includes('write') : false)}
         />
+      )}
+
+      {/* File Lock Modal */}
+      {fileLockModal.isOpen && fileLockModal.file && fileLockModal.blockedBy && (
+          <FileLockModal
+              fileName={fileLockModal.file.name}
+              filePath={fileLockModal.file.path_lower}
+              lock={fileLockModal.blockedBy}
+              onCancel={() => setFileLockModal(prev => ({ ...prev, isOpen: false }))}
+              onOpenReadOnly={() => {
+                  const f = fileLockModal.file!;
+                  const ctx = fileLockModal.context;
+                  setFileLockModal(prev => ({ ...prev, isOpen: false }));
+                  if (ctx === 'excel') {
+                      setExcelReadOnly(true);
+                      setExcelEditFile(f);
+                  } else {
+                      doDownloadToTrabajos(f);
+                  }
+              }}
+              onEditAvailable={async () => {
+                  const f = fileLockModal.file!;
+                  const ctx = fileLockModal.context;
+                  setFileLockModal(prev => ({ ...prev, isOpen: false }));
+                  const { lock } = await FileLockService.acquire(
+                      f.path_lower, currentUser!.username, currentUser!.fullName
+                  );
+                  if (lock) setMyActiveLocks(prev => ({ ...prev, [f.path_lower]: lock }));
+                  if (ctx === 'excel') {
+                      setExcelReadOnly(false);
+                      setExcelEditFile(f);
+                  } else {
+                      await doDownloadToTrabajos(f);
+                  }
+              }}
+          />
       )}
 
       {/* Bulk Move Modal */}
@@ -1808,6 +1974,8 @@ const App: React.FC = () => {
                     onFileSelected={handleSincronizarItem}
                     isSyncing={isTrabajosSyncing}
                     syncStatuses={trabajosSyncStatuses}
+                    autoSyncEnabled={!!trabajosDirHandle}
+                    lockedByMe={new Set(Object.keys(myActiveLocks))}
                 />
             </div>
         ) : (

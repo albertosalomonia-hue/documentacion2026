@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Briefcase, FolderOpen, RefreshCw, X, CheckCircle, Loader2, AlertCircle, Upload } from 'lucide-react';
+import { Briefcase, FolderOpen, RefreshCw, X, CheckCircle, Loader2, AlertCircle, Upload, Zap, Lock } from 'lucide-react';
 
 export interface WorkspaceItem {
     name: string;
@@ -18,6 +18,8 @@ interface WorkspacePanelProps {
     onFileSelected: (item: WorkspaceItem, file: File) => void;
     isSyncing: boolean;
     syncStatuses: Record<string, 'idle' | 'syncing' | 'done' | 'error' | 'missing'>;
+    autoSyncEnabled?: boolean;
+    lockedByMe?: Set<string>;
 }
 
 const fmtSize = (b: number) =>
@@ -27,7 +29,7 @@ const fsApiSupported = typeof window !== 'undefined' && 'showDirectoryPicker' in
 
 const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
     items, dirHandle, dirName, onConfigureDir, onSyncAll, onRemove,
-    onFileSelected, isSyncing, syncStatuses,
+    onFileSelected, isSyncing, syncStatuses, autoSyncEnabled = false, lockedByMe,
 }) => {
     const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -56,7 +58,14 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
                     </div>
                     <div>
                         <h2 className="text-lg font-bold text-gray-900">Directorio Trabajos</h2>
-                        <p className="text-xs text-gray-500">Archivos descargados para editar y sincronizar con Dropbox</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                            <p className="text-xs text-gray-500">Archivos descargados para editar y sincronizar</p>
+                            {autoSyncEnabled && (
+                                <span className="flex items-center gap-1 text-[10px] font-semibold text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full">
+                                    <Zap size={9} /> Auto-sync
+                                </span>
+                            )}
+                        </div>
                     </div>
                 </div>
                 {items.length > 0 && (
@@ -150,6 +159,11 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
                                                     {item.name}
                                                 </span>
                                                 <span className="text-xs text-gray-400 whitespace-nowrap">{fmtSize(item.size)}</span>
+                                                {lockedByMe?.has(item.dropboxPath) && (
+                                                    <span className="flex items-center gap-0.5 text-[10px] font-semibold text-orange-700 bg-orange-100 px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0" title="Tienes el bloqueo de edición sobre este archivo">
+                                                        <Lock size={9} /> Bloqueado
+                                                    </span>
+                                                )}
                                             </div>
                                             {status === 'missing' && (
                                                 <p className="text-xs text-amber-600 mt-0.5 ml-6">No encontrado en el directorio local</p>
