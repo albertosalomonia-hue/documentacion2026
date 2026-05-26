@@ -7,6 +7,8 @@ export interface WorkspaceItem {
     dropboxPath: string;
     downloadedAt: string;
     size: number;
+    openedByUsername?: string;
+    openedByFullName?: string;
 }
 
 interface WorkspacePanelProps {
@@ -186,16 +188,26 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
                                             >
                                                 {item.dropboxPath}
                                             </span>
-                                            {locksMap[item.dropboxPath] && (() => {
+                                            {(() => {
                                                 const lock = locksMap[item.dropboxPath];
-                                                const isMe = lock.locked_by === currentUsername;
+                                                // Prefer active lock holder; fall back to whoever downloaded it
+                                                const displayName = lock
+                                                    ? lock.locked_by_fullname
+                                                    : item.openedByFullName;
+                                                const displayUser = lock
+                                                    ? lock.locked_by
+                                                    : item.openedByUsername;
+                                                if (!displayName) return null;
+                                                const isMe = displayUser === currentUsername;
                                                 return (
                                                     <span
                                                         className={`mt-1 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${isMe ? 'bg-orange-500 text-white' : 'bg-red-500 text-white'}`}
-                                                        title={`Abierto desde ${new Date(lock.locked_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}`}
+                                                        title={lock
+                                                            ? `Bloqueado desde ${new Date(lock.locked_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}`
+                                                            : `Descargado por ${displayName}`}
                                                     >
                                                         <UserRound size={9} />
-                                                        {isMe ? 'Tú' : lock.locked_by_fullname}
+                                                        {isMe ? `Tú (${displayName})` : displayName}
                                                     </span>
                                                 );
                                             })()}

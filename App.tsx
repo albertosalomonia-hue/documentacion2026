@@ -1109,6 +1109,8 @@ const App: React.FC = () => {
               dropboxPath: file.path_lower,
               downloadedAt: new Date().toISOString(),
               size: file.size || 0,
+              openedByUsername: currentUser?.username,
+              openedByFullName: currentUser?.fullName,
           };
           setTrabajosItems(prev => {
               const updated = [...prev.filter(f => f.dropboxPath !== file.path_lower), newItem];
