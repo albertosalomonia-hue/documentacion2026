@@ -33,11 +33,32 @@ const TopBar: React.FC<TopBarProps> = ({
   const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
-    if (currentUser.role === 'admin') {
-      loadNotifications();
-      const interval = setInterval(loadNotifications, 30000); // Poll every 30s
-      return () => clearInterval(interval);
-    }
+    if (currentUser.role !== 'admin') return;
+
+    let failCount = 0;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+        try {
+            const data = await NotificationService.getAll();
+            setNotifications(data);
+            setUnreadCount(data.filter(n => !n.is_read).length);
+            failCount = 0;
+            // Normal interval: 30s
+            timeoutId = setTimeout(poll, 30000);
+        } catch {
+            failCount++;
+            // Exponential backoff: 30s → 2min → 5min → stop at 5 failures
+            if (failCount < 5) {
+                const delay = Math.min(30000 * Math.pow(2, failCount - 1), 300000);
+                timeoutId = setTimeout(poll, delay);
+            }
+            // After 5 failures, stop polling silently
+        }
+    };
+
+    poll();
+    return () => clearTimeout(timeoutId);
   }, [currentUser]);
 
   const loadNotifications = async () => {

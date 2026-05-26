@@ -226,7 +226,29 @@ const App: React.FC = () => {
     };
 
     initializeAuth();
-  }, []); 
+  }, []);
+
+  // 2. Proactive token refresh — runs every 4 minutes while logged in
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const globalTokenData = await MockAuthService.getGlobalDropboxToken();
+        if (!globalTokenData?.refreshToken || !globalTokenData.expiresAt) return;
+        // Refresh if expiring within the next 5 minutes
+        if (Date.now() > globalTokenData.expiresAt - 300000) {
+          const refreshed = await DropboxService.refreshAccessToken(globalTokenData.refreshToken);
+          const newExpiresAt = Date.now() + refreshed.expires_in * 1000;
+          await MockAuthService.saveGlobalDropboxToken({
+            accessToken: refreshed.access_token,
+            refreshToken: globalTokenData.refreshToken,
+            expiresAt: newExpiresAt,
+          });
+          setToken(refreshed.access_token);
+        }
+      } catch { /* silent — will retry next interval */ }
+    }, 240000); // every 4 minutes
+    return () => clearInterval(id);
+  }, []);
 
   // Helper to fetch global token
   const fetchGlobalToken = async () => {
@@ -888,8 +910,18 @@ const App: React.FC = () => {
       try {
           setIsLoading(true);
           const service = getDropboxService();
-          const paths = Array.from(selectedFilePaths);
-          await Promise.all(paths.map(p => service.deleteFile(p)));
+          const queue = (Array.from(selectedFilePaths) as string[]).slice();
+
+          // Worker queue — max 5 concurrent deletes to avoid CORS rate-limit
+          const worker = async () => {
+              while (true) {
+                  const p = queue.shift();
+                  if (!p) break;
+                  await service.deleteFile(p);
+              }
+          };
+          await Promise.all(Array.from({ length: Math.min(5, count) }, worker));
+
           await NotificationService.create('delete', `Eliminó ${count} archivos en masa`, currentUser?.username || 'unknown');
           setSelectedFilePaths(new Set());
           await refreshFiles();
@@ -1034,13 +1066,29 @@ const App: React.FC = () => {
       setBulkMoveModal(prev => ({ ...prev, isMoving: true }));
       try {
           const service = getDropboxService();
-          const paths = Array.from(selectedFilePaths) as string[];
-          await Promise.all(paths.map(async (srcPath) => {
-              const fileName = (srcPath as string).split('/').pop()!;
-              const destPath = targetBase === '' ? `/${fileName}` : `${targetBase}/${fileName}`;
-              await service.moveFile(srcPath, destPath);
-          }));
-          await NotificationService.create('upload', `Movió ${count} archivos a "${selectedFolder.name}"`, currentUser?.username || 'unknown');
+          const queue = (Array.from(selectedFilePaths) as string[]).slice();
+          const errors: string[] = [];
+
+          // Worker queue — max 5 concurrent moves to avoid CORS rate-limit
+          const worker = async () => {
+              while (true) {
+                  const srcPath = queue.shift();
+                  if (!srcPath) break;
+                  const fileName = srcPath.split('/').pop()!;
+                  const destPath = targetBase === '' ? `/${fileName}` : `${targetBase}/${fileName}`;
+                  try {
+                      await service.moveFile(srcPath, destPath);
+                  } catch (e: any) {
+                      errors.push(`${fileName}: ${e.message}`);
+                  }
+              }
+          };
+          await Promise.all(Array.from({ length: Math.min(5, count) }, worker));
+
+          if (errors.length > 0) {
+              alert(`${count - errors.length} archivos movidos. ${errors.length} con error:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? '\n...' : ''}`);
+          }
+          await NotificationService.create('upload', `Movió ${count - errors.length} archivos a "${selectedFolder.name}"`, currentUser?.username || 'unknown');
           setSelectedFilePaths(new Set());
           setBulkMoveModal({ isOpen: false, isMoving: false, selectedFolder: null, folders: [], isLoadingFolders: false, search: '' });
           await refreshFiles();
