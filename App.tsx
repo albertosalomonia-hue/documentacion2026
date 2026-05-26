@@ -1069,24 +1069,39 @@ const App: React.FC = () => {
           const queue = (Array.from(selectedFilePaths) as string[]).slice();
           const errors: string[] = [];
 
-          // Worker queue — max 5 concurrent moves to avoid CORS rate-limit
+          const moveWithRetry = async (srcPath: string) => {
+              const fileName = srcPath.split('/').pop()!;
+              const destPath = targetBase === '' ? `/${fileName}` : `${targetBase}/${fileName}`;
+              let lastErr: any = null;
+              for (let attempt = 0; attempt <= 4; attempt++) {
+                  if (attempt > 0) {
+                      // Exponential backoff: 1s, 2s, 4s, 8s
+                      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+                  }
+                  try {
+                      await service.moveFile(srcPath, destPath);
+                      return; // success
+                  } catch (e: any) {
+                      lastErr = e;
+                      const isRateLimit = e.message?.includes('too_many_write') || String(e.message).includes('429');
+                      if (!isRateLimit) break; // non-rate-limit: don't bother retrying
+                  }
+              }
+              errors.push(`${fileName}: ${parseUploadError(lastErr)}`);
+          };
+
+          // 3 concurrent workers — enough speed without triggering write-rate limits
           const worker = async () => {
               while (true) {
                   const srcPath = queue.shift();
                   if (!srcPath) break;
-                  const fileName = srcPath.split('/').pop()!;
-                  const destPath = targetBase === '' ? `/${fileName}` : `${targetBase}/${fileName}`;
-                  try {
-                      await service.moveFile(srcPath, destPath);
-                  } catch (e: any) {
-                      errors.push(`${fileName}: ${e.message}`);
-                  }
+                  await moveWithRetry(srcPath);
               }
           };
-          await Promise.all(Array.from({ length: Math.min(5, count) }, worker));
+          await Promise.all(Array.from({ length: Math.min(3, count) }, worker));
 
           if (errors.length > 0) {
-              alert(`${count - errors.length} archivos movidos. ${errors.length} con error:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? '\n...' : ''}`);
+              alert(`${count - errors.length} archivos movidos. ${errors.length} con error:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? '\n…' : ''}`);
           }
           await NotificationService.create('upload', `Movió ${count - errors.length} archivos a "${selectedFolder.name}"`, currentUser?.username || 'unknown');
           setSelectedFilePaths(new Set());
