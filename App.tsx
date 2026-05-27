@@ -279,14 +279,14 @@ const App: React.FC = () => {
     return () => clearInterval(id);
   }, []);
 
-  // 3. Heartbeat — keep held locks alive every 2 minutes
+  // 3. Heartbeat — ping every 30 s to keep held locks alive (spec: expire after 1 min of no ping)
   useEffect(() => {
     if (!currentUser) return;
     const id = setInterval(() => {
       Object.keys(myActiveLocksRef.current).forEach(path =>
         FileLockService.heartbeat(path, currentUser.username)
       );
-    }, 2 * 60 * 1000);
+    }, 30 * 1000);
     return () => clearInterval(id);
   }, [currentUser]);
 

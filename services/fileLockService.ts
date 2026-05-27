@@ -7,10 +7,11 @@ export interface FileLock {
     locked_by_fullname: string;
     locked_at: string;
     last_heartbeat: string;
+    token: string;
 }
 
-// Lock considered stale after 15 minutes of no heartbeat
-const LOCK_EXPIRY_MS = 15 * 60 * 1000;
+// Lock expires after 60 s of no heartbeat (spec: ping every 30 s, expire after 1 min)
+const LOCK_EXPIRY_MS = 60 * 1000;
 
 // Cached availability — avoids repeated 404s when the table doesn't exist yet
 let _tableAvailable: boolean | null = null;
@@ -28,6 +29,10 @@ async function tableAvailable(): Promise<boolean> {
         _tableAvailable = false;
     }
     return _tableAvailable;
+}
+
+function newToken(): string {
+    try { return crypto.randomUUID(); } catch { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 }
 
 export const FileLockService = {
@@ -66,7 +71,7 @@ export const FileLockService = {
                     await FileLockService.heartbeat(filePath, username);
                     return { lock: existing, blockedBy: null };
                 }
-                // Another user holds it — check expiry
+                // Another user holds it — check expiry (60 s)
                 const age = Date.now() - new Date(existing.last_heartbeat).getTime();
                 if (age < LOCK_EXPIRY_MS) {
                     return { lock: null, blockedBy: existing };
@@ -76,9 +81,17 @@ export const FileLockService = {
             }
 
             const now = new Date().toISOString();
+            const token = newToken();
             const { data, error } = await supabase
                 .from('file_locks')
-                .insert({ file_path: filePath, locked_by: username, locked_by_fullname: fullName, locked_at: now, last_heartbeat: now })
+                .insert({
+                    file_path: filePath,
+                    locked_by: username,
+                    locked_by_fullname: fullName,
+                    locked_at: now,
+                    last_heartbeat: now,
+                    token,
+                })
                 .select()
                 .single();
 
@@ -110,6 +123,7 @@ export const FileLockService = {
         } catch { /* silent */ }
     },
 
+    /** Send a ping every 30 s to keep the lock alive. */
     heartbeat: async (filePath: string, username: string): Promise<void> => {
         if (!await tableAvailable()) return;
         try {
