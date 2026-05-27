@@ -103,8 +103,9 @@ const App: React.FC = () => {
   const [renameModal, setRenameModal] = useState<{
       isOpen: boolean;
       folder: DropboxFile | null;
+      newName: string;
       isRenaming: boolean;
-  }>({ isOpen: false, folder: null, isRenaming: false });
+  }>({ isOpen: false, folder: null, newName: '', isRenaming: false });
 
   const [uploadProgress, setUploadProgress] = useState<{
       isOpen: boolean;
@@ -809,33 +810,26 @@ const App: React.FC = () => {
       }
   };
 
-  const handleRenameFolder = async (folder: DropboxFile) => {
-      if (!token) { alert("Sin conexión a Dropbox."); return; }
-      if (!canRenameFolder(folder, currentUser)) {
-          alert("No tienes permisos para renombrar esta carpeta.");
-          return;
-      }
-
-      const newName = prompt("Nuevo nombre para la carpeta:", folder.name);
-      if (!newName || newName.trim() === '') return;
-      if (newName.includes('/')) { alert("El nombre no puede contener '/'."); return; }
-
+  const handleRenameFolder = async () => {
+      const { folder, newName } = renameModal;
+      if (!folder || !token) return;
+      const trimmed = newName.trim();
+      if (!trimmed) return;
+      if (trimmed.includes('/')) { alert("El nombre no puede contener '/'."); return; }
       const parentPath = folder.path_lower.substring(0, folder.path_lower.lastIndexOf('/'));
-      const newPath = parentPath === '' ? `/${newName.trim()}` : `${parentPath}/${newName.trim()}`;
+      const newPath = parentPath === '' ? `/${trimmed}` : `${parentPath}/${trimmed}`;
       if (isRestrictedPath(newPath.toLowerCase())) { alert("Nombre restringido."); return; }
 
+      setRenameModal(prev => ({ ...prev, isRenaming: true }));
       try {
-          setIsLoading(true);
           const service = getDropboxService();
-          await service.renameFolder(folder.path_lower, newName.trim());
-
-          await NotificationService.create('upload', `Renombró carpeta: "${folder.name}" → "${newName.trim()}"`, currentUser?.username || 'unknown');
-
+          await service.renameFolder(folder.path_lower, trimmed);
+          await NotificationService.create('upload', `Renombró carpeta: "${folder.name}" → "${trimmed}"`, currentUser?.username || 'unknown');
+          setRenameModal({ isOpen: false, folder: null, newName: '', isRenaming: false });
           await refreshFiles();
       } catch (err: any) {
-          alert("Error al renomrar: " + err.message);
-      } finally {
-          setIsLoading(false);
+          alert('Error al renombrar: ' + err.message);
+          setRenameModal(prev => ({ ...prev, isRenaming: false }));
       }
   };
 
@@ -1801,6 +1795,49 @@ const App: React.FC = () => {
           </div>
       )}
 
+      {/* Rename Folder Modal */}
+      {renameModal.isOpen && renameModal.folder && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6">
+                  <div className="flex items-center mb-5 gap-3">
+                      <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+                          <Pencil className="text-orange-500" size={18} />
+                      </div>
+                      <div>
+                          <h3 className="text-base font-bold text-gray-900">Renombrar carpeta</h3>
+                          <p className="text-xs text-gray-500 truncate max-w-[200px]">{renameModal.folder.name}</p>
+                      </div>
+                  </div>
+                  <input
+                      autoFocus
+                      type="text"
+                      value={renameModal.newName}
+                      onChange={e => setRenameModal(prev => ({ ...prev, newName: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter') handleRenameFolder(); if (e.key === 'Escape') setRenameModal({ isOpen: false, folder: null, newName: '', isRenaming: false }); }}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 mb-5"
+                      placeholder="Nuevo nombre"
+                  />
+                  <div className="flex gap-3">
+                      <button
+                          onClick={() => setRenameModal({ isOpen: false, folder: null, newName: '', isRenaming: false })}
+                          disabled={renameModal.isRenaming}
+                          className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button
+                          onClick={handleRenameFolder}
+                          disabled={renameModal.isRenaming || !renameModal.newName.trim() || renameModal.newName.trim() === renameModal.folder.name}
+                          className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-orange-500 rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                      >
+                          {renameModal.isRenaming && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                          {renameModal.isRenaming ? 'Renombrando…' : 'Renombrar'}
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* Context Menu */}
       {contextMenu.isOpen && contextMenu.file && (
           <div
@@ -1885,7 +1922,7 @@ const App: React.FC = () => {
                           {contextMenu.canRename && (
                               <button
                                   className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-orange-50 flex items-center gap-2.5 transition-colors"
-                                  onClick={() => { setRenameModal({ isOpen: true, folder: contextMenu.file!, isRenaming: false }); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                                  onClick={() => { setRenameModal({ isOpen: true, folder: contextMenu.file!, newName: contextMenu.file!.name, isRenaming: false }); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
                                   <Pencil size={14} className="text-orange-500 shrink-0" />
                                   <span>Renombrar</span>
                               </button>
