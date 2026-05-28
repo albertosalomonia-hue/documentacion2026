@@ -11,6 +11,7 @@ import ActivityDashboard from './components/ActivityDashboard';
 import { FileLockService } from './services/fileLockService';
 import type { FileLock } from './services/fileLockService';
 import { saveDirHandle, loadDirHandle, hasPermission, requestPermission as reqDirPermission } from './services/dirHandleStore';
+import { UserPreferencesService } from './services/userPreferencesService';
 import ForcePasswordChangeModal from './components/ForcePasswordChangeModal';
 import UserManagement from './components/UserManagement';
 import UserSettings from './components/UserSettings';
@@ -238,6 +239,12 @@ const App: React.FC = () => {
                 const restoredUser = await MockAuthService.getUserByUsername(savedUsername);
                 if (restoredUser) {
                     setCurrentUser(restoredUser);
+                    // Load saved dir name from Supabase for this browser (may not have IndexedDB handle yet)
+                    const savedDirName = await UserPreferencesService.getDirName(savedUsername);
+                    if (savedDirName) {
+                        setTrabajosDirName(savedDirName);
+                        localStorage.setItem('trabajos_dir_name', savedDirName);
+                    }
                 } else {
                     localStorage.removeItem('ayala_current_user');
                 }
@@ -525,6 +532,16 @@ const App: React.FC = () => {
       return Array.from(permissions);
   }, []);
 
+  const loadDirNameForUser = async (username: string) => {
+      // Only set the name if no handle is already active (don't overwrite a working handle)
+      if (trabajosDirHandle) return;
+      const savedName = await UserPreferencesService.getDirName(username);
+      if (savedName && !trabajosDirName) {
+          setTrabajosDirName(savedName);
+          localStorage.setItem('trabajos_dir_name', savedName);
+      }
+  };
+
   const handleLogin = async (u: string, p: string) => {
     setIsLoggingIn(true);
     setLoginError(null);
@@ -532,11 +549,12 @@ const App: React.FC = () => {
       const user = await MockAuthService.login(u, p);
       setCurrentUser(user);
       localStorage.setItem('ayala_current_user', user.username);
-      
+
       // NOTIFY LOGIN
       await NotificationService.create('system', `Usuario inició sesión: ${user.username}`, user.username);
-      
+
       await fetchGlobalToken();
+      await loadDirNameForUser(user.username);
     } catch (e: any) {
       setLoginError(e.message);
     } finally {
@@ -1161,7 +1179,9 @@ const App: React.FC = () => {
           setTrabajosDirHandle(handle);
           setTrabajosDirName(handle.name);
           localStorage.setItem('trabajos_dir_name', handle.name);
+          // Persist handle for same-browser reloads + name for cross-browser awareness
           await saveDirHandle(handle);
+          if (currentUser) UserPreferencesService.setDirName(currentUser.username, handle.name);
       } catch { /* user cancelled */ }
   };
 

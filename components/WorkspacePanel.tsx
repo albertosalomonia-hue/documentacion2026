@@ -99,8 +99,8 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
             </div>
 
             {/* Directory status card */}
-            <div className={`rounded-xl border p-4 mb-6 flex items-center gap-3 ${dirHandle ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
-                <FolderOpen size={20} className={dirHandle ? 'text-green-600 flex-shrink-0' : 'text-amber-500 flex-shrink-0'} />
+            <div className={`rounded-xl border p-4 mb-6 flex items-center gap-3 ${dirHandle ? 'bg-green-50 border-green-200' : dirName ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'}`}>
+                <FolderOpen size={20} className={`flex-shrink-0 ${dirHandle ? 'text-green-600' : dirName ? 'text-blue-500' : 'text-amber-500'}`} />
                 <div className="flex-1 min-w-0">
                     {dirHandle ? (
                         <>
@@ -109,8 +109,12 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
                         </>
                     ) : dirName ? (
                         <>
-                            <p className="text-sm font-medium text-amber-800">Restaurando acceso a <span className="font-mono">{dirName}</span>…</p>
-                            <p className="text-xs text-amber-600">El acceso se restaurará automáticamente al interactuar con la app.</p>
+                            <p className="text-sm font-medium text-blue-800">
+                                Directorio de trabajo: <span className="font-mono font-bold">{dirName}</span>
+                            </p>
+                            <p className="text-xs text-blue-600">
+                                Nuevo navegador detectado. Haz clic en <strong>Seleccionar</strong> y busca la carpeta <strong>"{dirName}"</strong> en tu equipo.
+                            </p>
                         </>
                     ) : (
                         <>
@@ -129,10 +133,12 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
                         className={`flex-shrink-0 text-sm px-3 py-1.5 rounded-lg border font-medium transition-colors ${
                             dirHandle
                                 ? 'border-green-300 bg-white hover:bg-green-50 text-green-700'
+                                : dirName
+                                ? 'border-blue-300 bg-white hover:bg-blue-50 text-blue-700'
                                 : 'border-amber-300 bg-white hover:bg-amber-50 text-amber-700'
                         }`}
                     >
-                        {dirHandle ? 'Cambiar' : 'Configurar directorio'}
+                        {dirHandle ? 'Cambiar' : dirName ? 'Seleccionar' : 'Configurar directorio'}
                     </button>
                 )}
             </div>
