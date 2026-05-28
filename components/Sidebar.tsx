@@ -4,7 +4,8 @@ import {
   Users,
   BarChart2,
   Settings,
-  Briefcase
+  Briefcase,
+  Activity,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -47,13 +48,23 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView = 'plans', onNavigate, us
           />
           
           <NavItem icon={<BarChart2 size={18} />} label="Estadísticas" />
-          
+
           <NavItem
             icon={<Briefcase size={18} />}
             label="Trabajos"
             active={currentView === 'trabajos'}
             onClick={() => handleNav('trabajos')}
           />
+
+          {userRole === 'admin' && (
+            <NavItem
+              icon={<Activity size={18} />}
+              label="Actividad"
+              active={currentView === 'actividad'}
+              onClick={() => handleNav('actividad')}
+              activeBg="hover:bg-violet-900/20 text-violet-200"
+            />
+          )}
 
           <NavItem
             icon={<Settings size={18} />}

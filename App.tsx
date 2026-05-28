@@ -7,6 +7,7 @@ import FilePreviewModal from './components/FilePreviewModal';
 import ExcelEditorModal from './components/ExcelEditorModal';
 import WorkspacePanel, { WorkspaceItem } from './components/WorkspacePanel';
 import FileLockModal from './components/FileLockModal';
+import ActivityDashboard from './components/ActivityDashboard';
 import { FileLockService } from './services/fileLockService';
 import type { FileLock } from './services/fileLockService';
 import ForcePasswordChangeModal from './components/ForcePasswordChangeModal';
@@ -931,7 +932,7 @@ const App: React.FC = () => {
 
     // Notificación única al final (no bloquea la subida)
     if (uploadedPaths.length > 0) {
-        NotificationService.create('upload', `Subió ${uploadedPaths.length} archivo(s)`, user).catch(console.error);
+        NotificationService.create('upload', `Subió ${uploadedPaths.length} archivo(s) en ${currentPath || '/'}`, user).catch(console.error);
     }
 
     if (currentUser && currentUser.role !== 'admin' && uploadedPaths.length > 0) {
@@ -1235,6 +1236,8 @@ const App: React.FC = () => {
           const service = getDropboxService();
           await service.uploadFile('', file, item.dropboxPath);
           setTrabajosSyncStatuses(prev => ({ ...prev, [item.dropboxPath]: 'done' }));
+          const _syncFolder = item.dropboxPath.substring(0, item.dropboxPath.lastIndexOf('/')) || '/';
+          NotificationService.create('upload', `Sincronizó archivo: ${item.name} en ${_syncFolder}`, currentUser?.username || 'unknown').catch(() => {});
           // Release lock after successful sync so others can access the file
           if (currentUser && myActiveLocksRef.current[item.dropboxPath]) {
               FileLockService.release(item.dropboxPath, currentUser.username);
@@ -1376,7 +1379,8 @@ const App: React.FC = () => {
           const excelFile = new File([blob], file.name, { type: blob.type });
           const service = getDropboxService();
           await service.uploadFile('', excelFile, file.path_lower);
-          await NotificationService.create('upload', `Editó archivo: ${file.name}`, currentUser?.username || 'unknown');
+          const _editFolder = file.path_lower.substring(0, file.path_lower.lastIndexOf('/')) || '/';
+          await NotificationService.create('upload', `Editó archivo: ${file.name} en ${_editFolder}`, currentUser?.username || 'unknown');
           await refreshFiles();
       } catch (err: any) {
           throw new Error(err.message ?? 'Error al guardar');
@@ -1390,7 +1394,8 @@ const App: React.FC = () => {
           const link = await service.getTemporaryLink(file.path_lower);
           
           // NOTIFY DOWNLOAD
-          await NotificationService.create('system', `Descargó archivo: ${file.name}`, currentUser?.username || 'unknown');
+          const _dlFolder = file.path_lower.substring(0, file.path_lower.lastIndexOf('/')) || '/';
+          await NotificationService.create('system', `Descargó archivo: ${file.name} en ${_dlFolder}`, currentUser?.username || 'unknown');
           
           const a = document.createElement('a'); a.href = link; a.download = file.name;
           document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -1409,7 +1414,8 @@ const App: React.FC = () => {
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
-          await NotificationService.create('system', `Abrió archivo: ${file.name}`, currentUser?.username || 'unknown');
+          const _openFolder = file.path_lower.substring(0, file.path_lower.lastIndexOf('/')) || '/';
+          await NotificationService.create('system', `Abrió archivo: ${file.name} en ${_openFolder}`, currentUser?.username || 'unknown');
       } catch (err: any) { alert('Error al abrir: ' + err.message); }
   };
 
@@ -1547,7 +1553,7 @@ const App: React.FC = () => {
         }
 
         if (uploadedPaths.length > 0) {
-            NotificationService.create('upload', `Subió carpeta: ${folderName} (${uploadedPaths.length} archivos)`, currentUser?.username || 'unknown').catch(console.error);
+            NotificationService.create('upload', `Subió carpeta: ${folderName} (${uploadedPaths.length} archivos) en ${currentPath || '/'}`, currentUser?.username || 'unknown').catch(console.error);
         }
 
         setFailedFileObjects(failed);
@@ -2112,8 +2118,12 @@ const App: React.FC = () => {
             onRefresh={refreshFiles}
         />
         
-        {currentView === 'users' ? (
-             (currentUser.role === 'admin' || currentUser.role === 'jefe') ? <div className="flex-1 overflow-y-auto bg-gray-50"><UserManagement currentUser={currentUser} token={token} /></div> : 
+        {currentView === 'actividad' ? (
+            currentUser.role === 'admin'
+                ? <div className="flex-1 overflow-y-auto bg-gray-50"><ActivityDashboard /></div>
+                : <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 text-gray-500"><Lock size={48} className="mb-4 text-gray-300" /><h2 className="text-xl font-bold text-gray-700">Acceso Restringido</h2></div>
+        ) : currentView === 'users' ? (
+             (currentUser.role === 'admin' || currentUser.role === 'jefe') ? <div className="flex-1 overflow-y-auto bg-gray-50"><UserManagement currentUser={currentUser} token={token} /></div> :
              <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 text-gray-500"><Lock size={48} className="mb-4 text-gray-300" /><h2 className="text-xl font-bold text-gray-700">Acceso Restringido</h2></div>
         ) : currentView === 'settings' ? (
             <div className="flex-1 overflow-y-auto bg-gray-50">
