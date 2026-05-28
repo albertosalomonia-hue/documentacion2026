@@ -33,7 +33,8 @@ const fmtSize = (b: number) =>
 const fsApiSupported = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 
 const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
-    items, dirHandle, dirName, onConfigureDir, onSyncAll, onRemove,
+    items, dirHandle, dirName,
+    onConfigureDir, onSyncAll, onRemove,
     onFileSelected, isSyncing, syncStatuses, autoSyncEnabled = false,
     lockedByMe, locksMap = {}, currentUsername,
 }) => {
@@ -99,20 +100,25 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
 
             {/* Directory status card */}
             <div className={`rounded-xl border p-4 mb-6 flex items-center gap-3 ${dirHandle ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
-                <FolderOpen size={20} className={dirHandle ? 'text-green-600' : 'text-amber-500'} />
+                <FolderOpen size={20} className={dirHandle ? 'text-green-600 flex-shrink-0' : 'text-amber-500 flex-shrink-0'} />
                 <div className="flex-1 min-w-0">
                     {dirHandle ? (
                         <>
                             <p className="text-sm font-medium text-green-800">Directorio configurado</p>
                             <p className="text-xs text-green-700 font-mono truncate">{dirName || 'trabajos'}</p>
                         </>
+                    ) : dirName ? (
+                        <>
+                            <p className="text-sm font-medium text-amber-800">Restaurando acceso a <span className="font-mono">{dirName}</span>…</p>
+                            <p className="text-xs text-amber-600">El acceso se restaurará automáticamente al interactuar con la app.</p>
+                        </>
                     ) : (
                         <>
                             <p className="text-sm font-medium text-amber-800">Sin directorio local configurado</p>
                             <p className="text-xs text-amber-600">
                                 {fsApiSupported
-                                    ? 'Selecciona o crea la carpeta "trabajos" en tu equipo para guardar y editar archivos.'
-                                    : 'Tu navegador no soporta acceso a directorios. Los archivos se descargarán y podrás subirlos manualmente.'}
+                                    ? 'Selecciona la carpeta de tu equipo donde se guardarán los archivos descargados.'
+                                    : 'Tu navegador no soporta acceso a directorios. Los archivos se descargarán manualmente.'}
                             </p>
                         </>
                     )}

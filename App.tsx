@@ -10,6 +10,7 @@ import FileLockModal from './components/FileLockModal';
 import ActivityDashboard from './components/ActivityDashboard';
 import { FileLockService } from './services/fileLockService';
 import type { FileLock } from './services/fileLockService';
+import { saveDirHandle, loadDirHandle, hasPermission, requestPermission as reqDirPermission } from './services/dirHandleStore';
 import ForcePasswordChangeModal from './components/ForcePasswordChangeModal';
 import UserManagement from './components/UserManagement';
 import UserSettings from './components/UserSettings';
@@ -387,6 +388,45 @@ const App: React.FC = () => {
       if (currentUser) refreshVisibleLocks();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files]);
+
+  // 8. Restore Trabajos directory handle from IndexedDB on mount
+  useEffect(() => {
+      let listener: (() => void) | null = null;
+
+      (async () => {
+          try {
+              const stored = await loadDirHandle();
+              if (!stored) return;
+
+              // Show the stored name immediately so the UI isn't blank
+              setTrabajosDirName(stored.name);
+
+              if (await hasPermission(stored)) {
+                  // Permission still valid — restore silently
+                  setTrabajosDirHandle(stored);
+                  localStorage.setItem('trabajos_dir_name', stored.name);
+              } else {
+                  // Permission needs re-grant; request it on the user's first click
+                  // (browser requires a user gesture — any click counts)
+                  listener = async () => {
+                      try {
+                          const ok = await reqDirPermission(stored);
+                          if (ok) {
+                              setTrabajosDirHandle(stored);
+                              setTrabajosDirName(stored.name);
+                              localStorage.setItem('trabajos_dir_name', stored.name);
+                          }
+                      } catch { /* user denied or API unavailable */ }
+                  };
+                  document.addEventListener('click', listener, { once: true });
+              }
+          } catch { /* IndexedDB unavailable — ignore */ }
+      })();
+
+      return () => {
+          if (listener) document.removeEventListener('click', listener);
+      };
+  }, []);
 
   // Helper to fetch global token
   const fetchGlobalToken = async () => {
@@ -1121,6 +1161,7 @@ const App: React.FC = () => {
           setTrabajosDirHandle(handle);
           setTrabajosDirName(handle.name);
           localStorage.setItem('trabajos_dir_name', handle.name);
+          await saveDirHandle(handle);
       } catch { /* user cancelled */ }
   };
 
