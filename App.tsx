@@ -70,8 +70,10 @@ const App: React.FC = () => {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isAuthProcessing, setIsAuthProcessing] = useState(true);
 
-  const [currentView, setCurrentView] = useState<string>('plans'); 
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid'); 
+  const [currentView, setCurrentView] = useState<string>('plans');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [sortBy, setSortBy] = useState<'name' | 'date'>('name');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [currentPath, setCurrentPath] = useState<string>(CONFIG_ROOT || '');
   const [token, setToken] = useState<string>('');
   const [files, setFiles] = useState<DropboxFile[]>([]);
@@ -1646,8 +1648,19 @@ const App: React.FC = () => {
       );
   }
   
-  const folders = files.filter(f => f['.tag'] === 'folder');
-  const regularFiles = files.filter(f => f['.tag'] !== 'folder');
+  const sortFn = (a: DropboxFile, b: DropboxFile) => {
+      let cmp = 0;
+      if (sortBy === 'name') {
+          cmp = a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
+      } else {
+          const aDate = a.client_modified || a.server_modified || '';
+          const bDate = b.client_modified || b.server_modified || '';
+          cmp = aDate.localeCompare(bDate);
+      }
+      return sortOrder === 'asc' ? cmp : -cmp;
+  };
+  const folders = files.filter(f => f['.tag'] === 'folder').sort(sortFn);
+  const regularFiles = files.filter(f => f['.tag'] !== 'folder').sort(sortFn);
 
   return (
     <div 
@@ -2239,9 +2252,35 @@ const App: React.FC = () => {
                 </div>
                 
                 <div className="flex items-center space-x-3">
-                     <button 
+
+                     {/* Sort controls */}
+                     <div className="flex items-center gap-1 border border-gray-200 rounded-lg bg-gray-50 p-0.5">
+                         {/* Sort by selector */}
+                         <select
+                             value={sortBy}
+                             onChange={e => setSortBy(e.target.value as 'name' | 'date')}
+                             className="text-xs text-gray-600 bg-transparent border-none outline-none cursor-pointer px-1.5 py-1 font-medium"
+                             title="Ordenar por"
+                         >
+                             <option value="name">Nombre</option>
+                             <option value="date">Fecha</option>
+                         </select>
+                         {/* Asc / Desc toggle */}
+                         <button
+                             onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')}
+                             className="flex items-center gap-0.5 px-1.5 py-1 rounded hover:bg-white hover:shadow-sm text-gray-600 transition-all"
+                             title={sortOrder === 'asc' ? 'Orden ascendente (A → Z)' : 'Orden descendente (Z → A)'}
+                         >
+                             {sortOrder === 'asc'
+                                 ? <><ArrowRight size={12} className="rotate-90" /><span className="text-[11px] font-semibold">A→Z</span></>
+                                 : <><ArrowRight size={12} className="-rotate-90" /><span className="text-[11px] font-semibold">Z→A</span></>
+                             }
+                         </button>
+                     </div>
+
+                     <button
                          key="create-folder"
-                         onClick={handleCreateFolder} 
+                         onClick={handleCreateFolder}
                          disabled={!canCreateFolderInPath(currentPath, currentUser)}
                          className={`text-gray-600 hover:text-blue-600 flex items-center text-xs font-semibold px-3 py-2 bg-gray-50 rounded hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-all ${
                              !canCreateFolderInPath(currentPath, currentUser) ? 'opacity-50 cursor-not-allowed' : ''
