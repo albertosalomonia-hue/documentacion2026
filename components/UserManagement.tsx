@@ -662,6 +662,15 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser, token }) =
                                         >
                                             <Download size={10} className="mr-1"/> Descargar
                                         </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => togglePermission(folder.path, 'download_zip')}
+                                            className={`flex items-center text-[10px] px-2 py-1 rounded border transition-colors ${perms.includes('download_zip') ? 'bg-emerald-100 text-emerald-700 border-emerald-300 font-bold' : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100'}`}
+                                            title="Permite descargar carpetas completas en un archivo ZIP"
+                                        >
+                                            <Download size={10} className="mr-1"/> Descargar ZIP
+                                        </button>
                                     </div>
                                 )}
                             </div>

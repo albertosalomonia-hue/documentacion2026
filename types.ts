@@ -39,7 +39,7 @@ export enum ViewMode {
 
 // --- Auth & Permissions Types ---
 
-export type PermissionType = 'read' | 'write' | 'delete' | 'download';
+export type PermissionType = 'read' | 'write' | 'delete' | 'download' | 'download_zip';
 
 export interface FolderPermission {
   pathPrefix: string; // e.g., "/architectural"

@@ -206,7 +206,7 @@ const PlanCard: React.FC<PlanCardProps> = ({
                          <Edit2 size={14} />
                      </span>
                  )}
-                 {effectivePermissions.includes('download') && (
+                 {(isFolder ? effectivePermissions.includes('download_zip') : effectivePermissions.includes('download')) && (
                      <span className="bg-green-50 text-green-600 p-1 rounded shadow-sm border border-green-100" title="Descarga permitida">
                          <Download size={14} />
                      </span>
@@ -262,7 +262,7 @@ const PlanCard: React.FC<PlanCardProps> = ({
                  )}
 
                  {/* Download Button */}
-                 {onDownload && effectivePermissions.includes('download') && (
+                 {onDownload && (isFolder ? effectivePermissions.includes('download_zip') : effectivePermissions.includes('download')) && (
                      <button
                         onClick={handleDownloadClick}
                         className="p-1 bg-white text-gray-400 hover:text-green-600 hover:bg-green-50 rounded shadow-sm border border-gray-200"
@@ -425,7 +425,7 @@ export const PlanListItem: React.FC<PlanCardProps> = ({
             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                 <div className="flex justify-end space-x-2">
                     
-                    {effectivePermissions.includes('download') && (
+                    {(isFolder ? effectivePermissions.includes('download_zip') : effectivePermissions.includes('download')) && (
                         <button 
                             onClick={(e) => { e.stopPropagation(); if(onDownload) onDownload(file); }}
                             className="text-gray-400 hover:text-green-600 transition-colors p-1"

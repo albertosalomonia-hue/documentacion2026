@@ -216,7 +216,7 @@ export const MockAuthService = {
   },
 
   // Helper for local permission checking (Logic remains same, data source changed)
-  hasPermission: (user: User, path: string, type: 'read' | 'write' | 'delete' | 'download'): boolean => {
+  hasPermission: (user: User, path: string, type: 'read' | 'write' | 'delete' | 'download' | 'download_zip'): boolean => {
     if (user.role === 'admin') return true;
 
     // Check Folders
@@ -364,7 +364,7 @@ export const MockAuthService = {
               role: "admin",
               fullName: "Super Admin",
               avatarUrl: "https://i.pravatar.cc/150?u=admin",
-              allowedFolders: [{pathPrefix: "/", permissions: ["read", "write", "delete", "download"]}],
+              allowedFolders: [{pathPrefix: "/", permissions: ["read", "write", "delete", "download", "download_zip"]}],
               sharedFiles: []
           }
       }]);

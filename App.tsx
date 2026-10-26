@@ -521,7 +521,7 @@ const App: React.FC = () => {
   }, [token]);
 
   const getEffectivePermissions = useCallback((file: DropboxFile, user: User): PermissionType[] => {
-      if (user.role === 'admin') return ['read', 'write', 'delete', 'download'];
+      if (user.role === 'admin') return ['read', 'write', 'delete', 'download', 'download_zip'];
       let permissions = new Set<PermissionType>();
 
       const folderRule = user.allowedFolders?.find(rule => 
@@ -680,7 +680,7 @@ const App: React.FC = () => {
           isOpen: true, x, y, file,
           canDelete: perms.includes('delete'),
           canDownload: perms.includes('download') && !isFolder,
-          canDownloadFolder: perms.includes('download') && isFolder,
+          canDownloadFolder: perms.includes('download_zip') && isFolder,
           canShare,
           canRename: isFolder ? canRenameFolder(file, currentUser!) : false,
           lockedBy: cachedLockedBy,
@@ -1469,7 +1469,7 @@ const App: React.FC = () => {
 
   const handleDownloadFolder = async (folder: DropboxFile) => {
       if (!token || !currentUser) return;
-      if (!getEffectivePermissions(folder, currentUser).includes('download')) {
+      if (!getEffectivePermissions(folder, currentUser).includes('download_zip')) {
           alert('No tienes permiso para descargar esta carpeta.');
           return;
       }
