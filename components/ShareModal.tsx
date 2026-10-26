@@ -223,7 +223,18 @@ const ShareModal: React.FC<ShareModalProps> = ({
                                     <span className={`text-xs font-medium ${perms.includes('download') ? 'text-indigo-800' : 'text-gray-500'}`}>Bajar</span>
                                 </div>
 
-                                <div 
+                                {isFolder && (
+                                    <div
+                                        onClick={() => togglePermission(user.username, 'download_zip')}
+                                        title="Permite descargar la carpeta completa en un archivo ZIP"
+                                        className={`flex items-center px-2 py-1 rounded border shadow-sm cursor-pointer select-none transition-colors ${perms.includes('download_zip') ? 'bg-emerald-100 border-emerald-300' : 'bg-white border-gray-200 hover:border-gray-300'}`}
+                                    >
+                                        <Download size={12} className={`mr-1.5 ${perms.includes('download_zip') ? 'text-emerald-700' : 'text-gray-400'}`} />
+                                        <span className={`text-xs font-medium ${perms.includes('download_zip') ? 'text-emerald-800' : 'text-gray-500'}`}>ZIP</span>
+                                    </div>
+                                )}
+
+                                <div
                                     onClick={() => togglePermission(user.username, 'write')}
                                     className={`flex items-center px-2 py-1 rounded border shadow-sm cursor-pointer select-none transition-colors ${perms.includes('write') ? 'bg-green-100 border-green-300' : 'bg-white border-gray-200 hover:border-gray-300'}`}
                                 >
