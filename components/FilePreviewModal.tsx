@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Download, Loader2, FileText, AlertCircle } from 'lucide-react';
+import { X, Download, Loader2, FileText, AlertCircle, ExternalLink } from 'lucide-react';
 import { DropboxFile } from '../types';
 
 interface FilePreviewModalProps {
@@ -121,12 +121,31 @@ const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClose, onDo
 
     if (isPdf && objectUrl) {
       return (
-        <iframe
-          src={objectUrl}
-          className="w-full rounded border-0"
-          style={{ height: '72vh' }}
-          title={file.name}
-        />
+        <div className="flex flex-col gap-2">
+          <object
+            data={objectUrl}
+            type="application/pdf"
+            className="w-full rounded border-0"
+            style={{ height: '68vh' }}
+            title={file.name}
+          >
+            <div className="flex flex-col items-center justify-center h-64 gap-3 text-gray-500">
+              <FileText size={48} className="opacity-40" />
+              <p className="text-sm">Tu navegador bloqueó la vista previa del PDF.</p>
+            </div>
+          </object>
+          <div className="flex items-center justify-center gap-3 text-xs text-gray-500">
+            <span>¿No se ve el PDF o Chrome lo bloqueó?</span>
+            <a
+              href={objectUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 font-medium"
+            >
+              <ExternalLink size={12} /> Abrir en pestaña nueva
+            </a>
+          </div>
+        </div>
       );
     }
 
