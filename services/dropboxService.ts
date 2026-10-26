@@ -430,6 +430,25 @@ export class DropboxService {
   }
 
   /**
+   * Downloads a whole folder (with all subfolders) as a ZIP blob.
+   * Dropbox limits: 20 GB and 10,000 files per folder.
+   */
+  async downloadFolderZip(path: string): Promise<Blob> {
+    const response = await fetch(`${DROPBOX_CONTENT_BASE}/files/download_zip`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Dropbox-API-Arg': this.toDropboxApiArg({ path }),
+      },
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => response.statusText);
+      throw new Error(text || 'No se pudo descargar la carpeta');
+    }
+    return await response.blob();
+  }
+
+  /**
    * Generates a link to open the file in the Dropbox Web Interface.
    * This is required for Office Online Co-authoring.
    */

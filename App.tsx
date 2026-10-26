@@ -173,10 +173,11 @@ const App: React.FC = () => {
       file: DropboxFile | null;
       canDelete: boolean;
       canDownload: boolean;
+      canDownloadFolder: boolean;
       canShare: boolean;
       canRename: boolean;
       lockedBy: FileLock | null;
-  }>({ isOpen: false, x: 0, y: 0, file: null, canDelete: false, canDownload: false, canShare: false, canRename: false, lockedBy: null });
+  }>({ isOpen: false, x: 0, y: 0, file: null, canDelete: false, canDownload: false, canDownloadFolder: false, canShare: false, canRename: false, lockedBy: null });
 
   // 1. Initialize Auth and Token
   useEffect(() => {
@@ -679,6 +680,7 @@ const App: React.FC = () => {
           isOpen: true, x, y, file,
           canDelete: perms.includes('delete'),
           canDownload: perms.includes('download') && !isFolder,
+          canDownloadFolder: perms.includes('download') && isFolder,
           canShare,
           canRename: isFolder ? canRenameFolder(file, currentUser!) : false,
           lockedBy: cachedLockedBy,
@@ -1465,6 +1467,23 @@ const App: React.FC = () => {
       } catch (err: any) { alert('Error: ' + err.message); }
   };
 
+  const handleDownloadFolder = async (folder: DropboxFile) => {
+      if (!token || !currentUser) return;
+      if (!getEffectivePermissions(folder, currentUser).includes('download')) {
+          alert('No tienes permiso para descargar esta carpeta.');
+          return;
+      }
+      try {
+          const service = getDropboxService();
+          const blob = await service.downloadFolderZip(folder.path_lower);
+          await NotificationService.create('system', `Descargó carpeta (ZIP): ${folder.name} en ${folder.path_display}`, currentUser?.username || 'unknown');
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = `${folder.name}.zip`;
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
+      } catch (err: any) { alert('Error al descargar la carpeta: ' + err.message); }
+  };
+
   const doOpenLocal = async (file: DropboxFile) => {
       if (!token) return;
       try {
@@ -1974,10 +1993,22 @@ const App: React.FC = () => {
                       <div className="border-t border-gray-100" />
                   </>
               ) : (
-                  <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 rounded-t-lg">
-                      <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Carpeta</div>
-                      <div className="text-sm font-semibold text-yellow-700">{contextMenu.file.name}</div>
-                  </div>
+                  <>
+                      <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 rounded-t-lg">
+                          <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Carpeta</div>
+                          <div className="text-sm font-semibold text-yellow-700">{contextMenu.file.name}</div>
+                      </div>
+                      {contextMenu.canDownloadFolder && (
+                          <div className="py-1">
+                              <button
+                                  className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-green-50 flex items-center gap-2.5 transition-colors"
+                                  onClick={() => { handleDownloadFolder(contextMenu.file!); setContextMenu(prev => ({ ...prev, isOpen: false })); }}>
+                                  <Download size={14} className="text-green-500 shrink-0" />
+                                  <span>Descargar carpeta (ZIP)</span>
+                              </button>
+                          </div>
+                      )}
+                  </>
               )}
               <div className="py-1">
                   <button
@@ -2371,7 +2402,7 @@ const App: React.FC = () => {
                                 {folders.map(folder => {
                                     const perms = getEffectivePermissions(folder, currentUser);
                                     const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanListItem key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
+                                    return <PlanListItem key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDownload={handleDownloadFolder} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
                                 })}
                                 {regularFiles.map(file => {
                                     const perms = getEffectivePermissions(file, currentUser);
@@ -2390,7 +2421,7 @@ const App: React.FC = () => {
                                 {folders.map(folder => {
                                     const perms = getEffectivePermissions(folder, currentUser);
                                     const canShare = currentUser.role === 'admin' || (currentUser.role === 'jefe' && perms.includes('write')); 
-                                    return <PlanCard key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
+                                    return <PlanCard key={folder.id} file={folder} onClick={handleCardClick} onDragStart={(f) => setInternalDraggedFile(f)} onDragEnd={() => { setInternalDraggedFile(null); setDragOverBreadcrumb(null); }} onDownload={handleDownloadFolder} onDelete={handleDelete} onRename={handleRenameFolder} onAssignTag={(f) => setTagModalOpen({file: f, isOpen: true})} onMove={handleMoveFileRequest} onShare={canShare ? (f) => setShareModalOpen({file: f, isOpen: true}) : undefined} onContextMenuOpen={handleContextMenuOpen} draggedFile={internalDraggedFile} canDelete={perms.includes('delete')} canRename={canRenameFolder(folder, currentUser)} effectivePermissions={perms} allTags={availableTags} />;
                                 })}
                             </div>
                         </div>

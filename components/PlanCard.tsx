@@ -262,11 +262,11 @@ const PlanCard: React.FC<PlanCardProps> = ({
                  )}
 
                  {/* Download Button */}
-                 {onDownload && effectivePermissions.includes('download') && !isFolder && (
+                 {onDownload && effectivePermissions.includes('download') && (
                      <button
                         onClick={handleDownloadClick}
                         className="p-1 bg-white text-gray-400 hover:text-green-600 hover:bg-green-50 rounded shadow-sm border border-gray-200"
-                        title="Descargar"
+                        title={isFolder ? 'Descargar carpeta (ZIP)' : 'Descargar'}
                      >
                          <Download size={14} />
                      </button>
@@ -429,7 +429,7 @@ export const PlanListItem: React.FC<PlanCardProps> = ({
                         <button 
                             onClick={(e) => { e.stopPropagation(); if(onDownload) onDownload(file); }}
                             className="text-gray-400 hover:text-green-600 transition-colors p-1"
-                            title="Descargar"
+                            title={isFolder ? 'Descargar carpeta (ZIP)' : 'Descargar'}
                         >
                             <Download size={16} />
                         </button>
