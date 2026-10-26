@@ -146,7 +146,7 @@ const ShareModal: React.FC<ShareModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[85vh]">
         
         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
           <div className="flex items-center">
@@ -186,28 +186,29 @@ const ShareModal: React.FC<ShareModalProps> = ({
                         key={user.id} 
                         className={`rounded-lg border transition-all ${hasAccess ? 'border-blue-300 bg-blue-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
                     >
-                        <div 
-                            className="flex items-center p-3 cursor-pointer"
-                            onClick={() => toggleUserAccess(user.username)}
-                        >
-                            <div className={`w-5 h-5 rounded border mr-3 flex items-center justify-center transition-colors ${hasAccess ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'}`}>
-                                {hasAccess && <Check size={14} className="text-white" />}
+                        <div className="flex items-center p-3 gap-3">
+                            <div
+                                className="flex items-center flex-1 min-w-0 cursor-pointer"
+                                onClick={() => toggleUserAccess(user.username)}
+                            >
+                                <div className={`w-5 h-5 rounded border mr-3 flex-shrink-0 flex items-center justify-center transition-colors ${hasAccess ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'}`}>
+                                    {hasAccess && <Check size={14} className="text-white" />}
+                                </div>
+
+                                <img
+                                    src={user.avatarUrl || `https://i.pravatar.cc/150?u=${user.username}`}
+                                    alt={user.username}
+                                    className="w-8 h-8 rounded-full mr-3 object-cover flex-shrink-0"
+                                />
+
+                                <div className="min-w-0">
+                                    <p className={`text-sm font-medium truncate ${hasAccess ? 'text-blue-900' : 'text-gray-700'}`}>{user.fullName}</p>
+                                    <p className="text-xs text-gray-500 truncate">@{user.username}</p>
+                                </div>
                             </div>
-                            
-                            <img 
-                                src={user.avatarUrl || `https://i.pravatar.cc/150?u=${user.username}`} 
-                                alt={user.username} 
-                                className="w-8 h-8 rounded-full mr-3 object-cover" 
-                            />
-                            
-                            <div className="flex-1">
-                                <p className={`text-sm font-medium ${hasAccess ? 'text-blue-900' : 'text-gray-700'}`}>{user.fullName}</p>
-                                <p className="text-xs text-gray-500">@{user.username}</p>
-                            </div>
-                        </div>
 
                         {hasAccess && (
-                            <div className="px-3 pb-3 pt-0 ml-11 flex flex-wrap gap-2">
+                            <div className="flex flex-wrap justify-end items-center gap-2">
                                 <div className="flex items-center bg-white px-2 py-1 rounded border border-blue-200 shadow-sm opacity-70 cursor-not-allowed" title="Lectura siempre activa">
                                     <Eye size={12} className="mr-1.5 text-blue-600" />
                                     <span className="text-xs text-blue-800 font-medium">Ver</span>
@@ -237,8 +238,19 @@ const ShareModal: React.FC<ShareModalProps> = ({
                                     <Trash2 size={12} className={`mr-1.5 ${perms.includes('delete') ? 'text-red-700' : 'text-gray-400'}`} />
                                     <span className={`text-xs font-medium ${perms.includes('delete') ? 'text-red-800' : 'text-gray-500'}`}>Borrar</span>
                                 </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => toggleUserAccess(user.username)}
+                                    className="flex items-center px-2 py-1 rounded border border-gray-200 bg-white text-gray-500 hover:text-red-600 hover:border-red-300 hover:bg-red-50 shadow-sm transition-colors"
+                                    title="Dejar de compartir"
+                                >
+                                    <X size={12} className="mr-1" />
+                                    <span className="text-xs font-medium">Quitar</span>
+                                </button>
                             </div>
                         )}
+                        </div>
                     </div>
                 );
             })}
